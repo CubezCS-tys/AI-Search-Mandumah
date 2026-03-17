@@ -17,14 +17,11 @@ interface WordParticle {
 
 interface ColumnCell {
   value: string;
-  // final grid position
   tx: number;
   ty: number;
-  dimensionIdx: number; // which dimension slot (1-based)
-  // which glyph spawned it (null = filler)
+  dimensionIdx: number;
   sourceX: number;
   sourceY: number;
-  // arrival timing offset 0–1
   arrivalT: number;
 }
 
@@ -40,19 +37,19 @@ const ACCENT_R = 155, ACCENT_G = 27, ACCENT_B = 48;
 const GLOW_R = 220, GLOW_G = 60, GLOW_B = 90;
 
 // Phase durations (seconds)
-const P_SHOW    = 0.45;  // text fades in
-const P_MORPH   = 1.2;   // chars flicker/glitch into numbers in-place
-const P_STREAM  = 1.1;   // numbers stream leftward → column forms
-const P_SETTLE  = 0.35;  // column is fully visible, dimension counter runs
-const P_COLLAPSE = 0.55; // column converges to center
-const P_BURST   = 0.3;   // burst ring
+const P_SHOW     = 0.55;  // text fades in
+const P_MORPH    = 1.1;   // words dissolve
+const P_STREAM   = 1.5;   // numbers stream from words → vector column
+const P_SETTLE   = 0.6;   // vector visible, labels shown
+const P_COLLAPSE = 0.7;   // vector converges to center
+const P_BURST    = 0.35;  // burst ring
 const TOTAL = P_SHOW + P_MORPH + P_STREAM + P_SETTLE + P_COLLAPSE + P_BURST;
 
-// Vector column layout
-const VECTOR_ROWS = 14;   // rows visible (dim 1–14 shown, rest implied)
-const COL_W = 78;         // column width
-const ROW_H  = 18;        // row height
-const NUM_COLS = 4;       // side-by-side columns (4 cols × 14 rows = 56 cells)
+// Vector block layout
+const VECTOR_ROWS = 14;
+const COL_W = 78;
+const ROW_H  = 18;
+const NUM_COLS = 4;
 
 /* ── Helpers ────────────────────────────────────────────────── */
 
@@ -82,8 +79,6 @@ export default function EmbeddingAnimation({ query, onEmbeddingDone, onComplete 
   const t0Ref      = useRef<number | null>(null);
   const wordsRef   = useRef<WordParticle[]>([]);
   const cellsRef   = useRef<ColumnCell[]>([]);
-  // per-word: which short number string to briefly flash during morph
-  const glitchBufRef = useRef<string[]>([]);
   const firedRef   = useRef(false);
   const doneRef    = useRef(false);
   const dprRef     = useRef(1);
@@ -128,10 +123,7 @@ export default function EmbeddingAnimation({ query, onEmbeddingDone, onComplete 
       };
     });
 
-    // One short number string per word —shown during morph flash
-    glitchBufRef.current = words.map((_, wi) => fakeVector(wi * 77 + 3).trim());
-
-    // Build column cells — enough to fill VECTOR_ROWS × NUM_COLS grid
+    // Build column cells — stream from word positions to grid
     const totalCells = VECTOR_ROWS * NUM_COLS;
     const colGridW = NUM_COLS * COL_W;
     const colGridH = VECTOR_ROWS * ROW_H;
@@ -141,7 +133,6 @@ export default function EmbeddingAnimation({ query, onEmbeddingDone, onComplete 
     // Flatten word centers as source positions for cells
     const allGlyphs: { x: number; y: number; seed: number }[] = [];
     words.forEach((wp, wi) => {
-      // Spread a few source points across the word's horizontal span
       const slots = Math.max(2, Math.round(wp.width / 20));
       for (let s = 0; s < slots; s++) {
         const fx = wp.sx - wp.width / 2 + (s + 0.5) * (wp.width / slots);
@@ -154,7 +145,6 @@ export default function EmbeddingAnimation({ query, onEmbeddingDone, onComplete 
       for (let col = 0; col < NUM_COLS; col++) {
         const idx = row * NUM_COLS + col;
         const src = allGlyphs[idx % allGlyphs.length];
-        // Stagger arrivals: left column first, top to bottom
         const arrivalT = (col * VECTOR_ROWS + row) / totalCells;
         cells.push({
           value: fakeVector(idx * 3 + 1),
@@ -210,23 +200,16 @@ export default function EmbeddingAnimation({ query, onEmbeddingDone, onComplete 
     const gridTop  = cy - colGridH / 2;
     const fontSize = Math.min(32, w * 0.038);
 
-    // ── Phase 1: Show + Morph — whole words fade in, then glitch out ──
+    // ── Phase 1: Show + Morph — whole words fade in, then dissolve ──
 
     if (t < tStream) {
       for (let wi = 0; wi < words.length; wi++) {
         const wp = words[wi];
-
-        // Fade in — staggered per word
         const appearT = clamp01((t - wp.stagger * 0.12) * (1 / P_SHOW));
         if (appearT <= 0) continue;
-
-        // Each word starts morphing at a slightly different time
         const morphStart = tMorph + wp.stagger * P_MORPH * 0.3;
         const morphT     = clamp01((t - morphStart) / (P_MORPH * 0.6));
-        // Word fades out as morphT approaches 1
         const wordAlpha  = appearT * (1 - easeIn(morphT));
-
-        // Draw original Arabic word — fades out cleanly, no number overlay
         if (wordAlpha > 0.01) {
           ctx.save();
           ctx.globalAlpha  = wordAlpha;
@@ -241,21 +224,19 @@ export default function EmbeddingAnimation({ query, onEmbeddingDone, onComplete 
       }
     }
 
-    // ── Phase 2: Stream — numbers fly from glyph positions → column ──
+    // ── Phase 2: Stream — numbers fly from word positions → column ──
 
     if (t > tMorph && t < tCollapse + 0.15) {
       for (const cell of cells) {
-        // Each cell streams in at its own arrivalT offset
         const streamStart = tStream + cell.arrivalT * P_STREAM * 0.85;
         const streamDur   = P_STREAM * 0.28;
 
         let cx2: number, cy2: number, ca: number, cScale: number;
 
         if (t < tStream) {
-          // During morph: cells are invisible — the word handles the visual
           continue;
         } else if (t < streamStart) {
-          // Waiting to stream: fade in gently at source position
+          // Waiting to stream: fade in at source
           const waitAge = t - tStream;
           const fadeIn  = clamp01(waitAge * 4 - cell.arrivalT * 2);
           cx2 = cell.sourceX;
@@ -263,12 +244,10 @@ export default function EmbeddingAnimation({ query, onEmbeddingDone, onComplete 
           ca = fadeIn * 0.45;
           cScale = 0.75;
         } else if (t < streamStart + streamDur) {
-          // Streaming: arc toward column position
+          // Streaming: arc toward column
           const sT = easeInOut(clamp01((t - streamStart) / streamDur));
-          // Slight arc: swing through a midpoint above the line
           const midX = lerp(cell.sourceX, cell.tx, 0.5);
           const midY = lerp(cell.sourceY, cell.ty, 0.5) - 30 * Math.sin(Math.PI * sT);
-          // Quadratic bezier interpolation
           const bx = lerp(lerp(cell.sourceX, midX, sT), lerp(midX, cell.tx, sT), sT);
           const by = lerp(lerp(cell.sourceY, midY, sT), lerp(midY, cell.ty, sT), sT);
           cx2 = bx;
@@ -276,19 +255,16 @@ export default function EmbeddingAnimation({ query, onEmbeddingDone, onComplete 
           ca = lerp(0.45, 0.95, sT);
           cScale = lerp(0.75, 0.9, sT);
         } else if (t < tSettle) {
-          // Settled in column
           cx2 = cell.tx;
           cy2 = cell.ty;
           ca = 0.95;
           cScale = 0.9;
         } else if (t < tCollapse) {
-          // Settle phase — stay put, dim slightly as label appears
           cx2 = cell.tx;
           cy2 = cell.ty;
           ca = 0.85;
           cScale = 0.88;
         } else if (t < tBurst) {
-          // Collapse — converge to center
           const colT = easeIn(clamp01((t - tCollapse - cell.arrivalT * 0.08) / (P_COLLAPSE * 0.9)));
           cx2 = lerp(cell.tx, cx, colT);
           cy2 = lerp(cell.ty, cy, colT);
@@ -313,13 +289,13 @@ export default function EmbeddingAnimation({ query, onEmbeddingDone, onComplete 
       }
     }
 
-    // ── Vector column decorations (brackets + dimension labels) ──
+    // ── Vector column decorations (brackets + labels) ────────
 
     if (t > tStream - 0.1 && t < tBurst) {
       const formProgress = clamp01((t - tStream) / P_STREAM);
       const settleAlpha  = clamp01((t - tStream + 0.1) * 1.8) * clamp01(1 - (t - tCollapse) * 4);
 
-      // Bracket fades in as column fills
+      // Brackets
       const bracketA = settleAlpha * 0.3;
       if (bracketA > 0.01) {
         const bx1 = (gridLeft - 14) * dpr;
@@ -336,35 +312,23 @@ export default function EmbeddingAnimation({ query, onEmbeddingDone, onComplete 
         ctx.lineTo(bx2, by2); ctx.lineTo(bx2 - bw, by2); ctx.stroke();
       }
 
-      // "BGE-M3 Embedding" label above
-      if (t < tCollapse) {
-        const la = clamp01((t - tMorph * 0.7) * 2.5) * clamp01(1 - (t - tCollapse) * 5) * 0.7;
-        if (la > 0) {
-          ctx.font = `500 ${11 * dpr}px Tajawal, system-ui`;
-          ctx.textAlign = "center";
-          ctx.fillStyle = `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${la})`;
-          ctx.fillText("BGE-M3 Embedding", cx * dpr, (gridTop - 38) * dpr);
-        }
-      }
-
-      // "float[1024]" + dimension counter — appears as column fills
+      // float[NNNN] counter + sparse label
       if (t > tStream + P_STREAM * 0.3 && t < tCollapse + 0.1) {
-        const la2 = clamp01((t - tStream - P_STREAM * 0.3) * 2.5) * clamp01(1 - (t - tCollapse) * 5) * 0.75;
-        if (la2 > 0) {
-          // Dim counter: show how many dimensions filled so far (up to 1024)
+        const la = clamp01((t - tStream - P_STREAM * 0.3) * 2.5) * clamp01(1 - (t - tCollapse) * 5) * 0.75;
+        if (la > 0) {
           const dimFilled = Math.min(1024, Math.floor(formProgress * 1024));
           ctx.font = `600 ${12 * dpr}px 'SF Mono', 'Fira Code', monospace`;
           ctx.textAlign = "center";
-          ctx.fillStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${la2})`;
+          ctx.fillStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${la})`;
           ctx.fillText(`float[${dimFilled.toString().padStart(4, "0")}]`, cx * dpr, (gridTop - 22) * dpr);
 
           ctx.font = `400 ${10 * dpr}px Tajawal, system-ui`;
-          ctx.fillStyle = `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${la2 * 0.6})`;
+          ctx.fillStyle = `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${la * 0.6})`;
           ctx.fillText("+ sparse vector", cx * dpr, (gridTop + colGridH + 24) * dpr);
         }
       }
 
-      // Thin scan line sweeping down the column during stream phase
+      // Scan line sweeping down during stream
       if (t > tStream && t < tSettle + 0.2) {
         const scanT = clamp01((t - tStream) / P_STREAM);
         const scanY = (gridTop + scanT * colGridH) * dpr;

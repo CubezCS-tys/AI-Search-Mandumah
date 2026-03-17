@@ -40,8 +40,9 @@ const CLUSTER_COUNT = 8;
 const EDGE_ARC_DIST = 0.45;
 const INNER_CLUSTER_EDGE_DIST = 0.55;
 
-const GLOW_R = 220, GLOW_G = 60, GLOW_B = 90;
-const BASE_R = 155, BASE_G = 27, BASE_B = 48;
+const GLOW_R   = 220, GLOW_G   = 60,  GLOW_B   = 90;
+const BASE_R   = 155, BASE_G   = 27,  BASE_B   = 48;
+const ACCENT_R = 190, ACCENT_G = 100, ACCENT_B = 60; // sparse-wave warm tint
 
 const CLUSTER_CENTERS = [
   { theta: 0.3, phi: 0.8 },
@@ -243,7 +244,7 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
       const elapsed = t - searchStartRef.current;
       zoom.current += (zoom.target - zoom.current) * (1 - Math.exp(-zoomSpeed * dt));
 
-      if (elapsed > 2.5) {
+      if (elapsed > 3.8) {
         searchActiveRef.current = false;
         resolveRef.current?.();
         resolveRef.current = null;
@@ -423,120 +424,166 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
       ctx.fill();
     }
 
-    // ── Scan rings ───────────────────────────────────────────
+    // ── Search visualization ─────────────────────────────────
 
     if (searchActiveRef.current && searchT >= 0) {
       const resultIndices = resultIndicesRef.current;
 
-      // ── Beams: center → each result node ──────────────────
-      for (let ri = 0; ri < resultIndices.length; ri++) {
-        const ni   = resultIndices[ri];
-        const node = nodes[ni];
-        const arriveAt = node.pulseDelay; // staggered beam arrival
-        const beamAge  = searchT - arriveAt;
-        if (beamAge < 0) continue;
+      // RRF timing: dense wave first, sparse wave 0.45s later
+      const DENSE_START  = 0.05;
+      const SPARSE_START = 0.50;
+      const WAVE_DUR     = 0.55; // time for ring to reach globe edge
 
-        // Beam travels from globe center to node: draw line 0→1 over 0.25s
-        const beamT = clamp01(beamAge / 0.25);
-        const bAlpha = (1 - Math.max(0, (beamAge - 0.4) / 0.4)) * 0.55;
-
-        if (beamT > 0 && bAlpha > 0) {
-          const tx = lerp(cx, node.px, beamT);
-          const ty = lerp(cy, node.py, beamT);
-          const grad = ctx.createLinearGradient(cx, cy, tx, ty);
-          grad.addColorStop(0, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0)`);
-          grad.addColorStop(0.6, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${bAlpha * 0.4})`);
-          grad.addColorStop(1,   `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${bAlpha})`);
-          ctx.beginPath();
-          ctx.moveTo(cx, cy);
-          ctx.lineTo(tx, ty);
-          ctx.strokeStyle = grad;
-          ctx.lineWidth = (1.5 - ri * 0.15) * dpr;
-          ctx.stroke();
-        }
-
-        // ── Result-node halo (sustained glow ring) ───────────
-        if (beamAge > 0.2) {
-          const haloAge = beamAge - 0.2;
-          // Expanding ring on arrival
-          const ringT   = clamp01(haloAge / 0.35);
-          const ringR   = (4 + ringT * 22) * dpr;
-          const ringA   = (1 - ringT) * 0.55;
-          if (ringA > 0.01) {
+      // ── Change 4: RRF dual-wave rings ─────────────────────
+      // Dense wave (solid, brighter)
+      {
+        const wt = searchT - DENSE_START;
+        if (wt > 0 && wt < WAVE_DUR + 0.3) {
+          const rp = clamp01(wt / WAVE_DUR);
+          const rr = rp * Rdpr * 1.08;
+          const ra = (1 - rp) * 0.45;
+          if (ra > 0.005) {
             ctx.beginPath();
-            ctx.arc(node.px, node.py, ringR, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${ringA})`;
-            ctx.lineWidth = (2 - ringT) * dpr;
+            ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${ra})`;
+            ctx.lineWidth   = 2 * dpr;
+            ctx.setLineDash([]);
             ctx.stroke();
-          }
-
-          // Sustained smaller halo that pulses
-          const pulse = 0.5 + 0.5 * Math.sin(haloAge * 6 + ri);
-          const gR2   = (node.radius + 3 + pulse * 4) * dpr;
-          const gGrad = ctx.createRadialGradient(node.px, node.py, 0, node.px, node.py, gR2 * 3);
-          gGrad.addColorStop(0, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${0.45 + pulse * 0.2})`);
-          gGrad.addColorStop(1, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0)`);
-          ctx.beginPath();
-          ctx.arc(node.px, node.py, gR2 * 3, 0, Math.PI * 2);
-          ctx.fillStyle = gGrad;
-          ctx.fill();
-
-          // Score label: "sim: 0.92" style
-          const realScore  = resultScoresRef.current[ri];
-          const scoreVal  = realScore != null
-            ? realScore.toFixed(2)
-            : (0.78 + seededRand(ni) * 0.19).toFixed(2);
-          const labelA   = clamp01((haloAge - 0.3) * 3) * (0.7 + pulse * 0.15);
-          if (labelA > 0.05) {
-            ctx.font      = `600 ${10 * dpr}px 'SF Mono', 'Fira Code', monospace`;
-            ctx.textAlign = "center";
-            ctx.fillStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${labelA})`;
-            ctx.fillText(`${scoreVal}`, node.px, node.py - (node.radius + 10) * dpr);
           }
         }
       }
 
-      // ── Cross-result similarity lines (K-NN connections) ──────
-      if (searchT > 0.5 && resultIndices.length > 1) {
-        for (let i = 0; i < resultIndices.length; i++) {
-          for (let j = i + 1; j < resultIndices.length; j++) {
-            const na = nodes[resultIndices[i]];
-            const nb = nodes[resultIndices[j]];
-            const lineAge = searchT - Math.max(na.pulseDelay, nb.pulseDelay) - 0.3;
-            if (lineAge < 0) continue;
-
-            const lineA = clamp01(lineAge / 0.3) * 0.28;
-            const pulse = 0.6 + 0.4 * Math.sin(searchT * 3 + i + j);
-            if (lineA * pulse < 0.01) continue;
-
-            const grad = ctx.createLinearGradient(na.px, na.py, nb.px, nb.py);
-            grad.addColorStop(0,   `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${lineA * pulse})`);
-            grad.addColorStop(0.5, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${lineA * pulse * 0.5})`);
-            grad.addColorStop(1,   `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${lineA * pulse})`);
+      // Sparse wave (dashed, softer)
+      {
+        const wt = searchT - SPARSE_START;
+        if (wt > 0 && wt < WAVE_DUR + 0.3) {
+          const rp = clamp01(wt / WAVE_DUR);
+          const rr = rp * Rdpr * 1.08;
+          const ra = (1 - rp) * 0.28;
+          if (ra > 0.005) {
             ctx.beginPath();
-            ctx.moveTo(na.px, na.py);
-            ctx.lineTo(nb.px, nb.py);
-            ctx.strokeStyle = grad;
-            ctx.lineWidth   = 1.2 * dpr;
-            ctx.setLineDash([4 * dpr, 6 * dpr]);
+            ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${ra})`;
+            ctx.lineWidth   = 1.5 * dpr;
+            ctx.setLineDash([6 * dpr, 8 * dpr]);
             ctx.stroke();
             ctx.setLineDash([]);
           }
         }
       }
 
-      // ── Subtle single scan ring from center (ambient) ──────
-      for (let i = 0; i < 2; i++) {
-        const rp = searchT * 0.42 - i * 0.22;
-        if (rp <= 0) continue;
-        const rr = rp * Rdpr * 1.15;
-        const ra = Math.max(0, 0.07 - rp * 0.025) * (1 - i * 0.4);
-        if (ra <= 0) continue;
+      // ── Change 2: Simultaneous ring scan + top-5 stay lit ──
+      // The dense wave's radius at this moment
+      const waveFront      = clamp01((searchT - DENSE_START) / WAVE_DUR) * Rdpr * 1.08;
+      const sparseWaveFront = clamp01((searchT - SPARSE_START) / WAVE_DUR) * Rdpr * 1.08;
+
+      for (let ri = 0; ri < resultIndices.length; ri++) {
+        const ni   = resultIndices[ri];
+        const node = nodes[ni];
+
+        // Distance from globe center (in canvas coords)
+        const dx    = node.px - cx;
+        const dy    = node.py - cy;
+        const distC = Math.sqrt(dx * dx + dy * dy);
+
+        // A node lights up when the wave front passes over it
+        const hitByDense  = waveFront >= distC;
+        const hitBySparse = sparseWaveFront >= distC;
+
+        if (!hitByDense) continue;
+
+        // How long has this node been lit (since the wave passed)?
+        const wavePassT = (searchT - DENSE_START) - (distC / Rdpr) * WAVE_DUR;
+
+        // ── Expanding ring on first contact ───────────────────
+        const ringT = clamp01(wavePassT / 0.35);
+        const ringR = (4 + ringT * 24) * dpr;
+        const ringA = (1 - ringT) * 0.6;
+        if (ringA > 0.01) {
+          ctx.beginPath();
+          ctx.arc(node.px, node.py, ringR, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${ringA})`;
+          ctx.lineWidth   = (2 - ringT) * dpr;
+          ctx.stroke();
+        }
+
+        // Extra double-ring on nodes hit by BOTH waves (RRF overlap)
+        if (hitBySparse && wavePassT > 0.15) {
+          const doubleAge = (searchT - SPARSE_START) - (distC / Rdpr) * WAVE_DUR;
+          if (doubleAge > 0) {
+            const dt2 = clamp01(doubleAge / 0.3);
+            const dr  = (6 + dt2 * 18) * dpr;
+            const da  = (1 - dt2) * 0.45;
+            if (da > 0.01) {
+              ctx.beginPath();
+              ctx.arc(node.px, node.py, dr, 0, Math.PI * 2);
+              ctx.strokeStyle = `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${da})`;
+              ctx.lineWidth   = 1.5 * dpr;
+              ctx.stroke();
+            }
+          }
+        }
+
+        // ── Sustained glow (node stays lit) ───────────────────
+        const pulse  = 0.5 + 0.5 * Math.sin(wavePassT * 6 + ri);
+        const gR2    = (node.radius + 3 + pulse * 4) * dpr;
+        const gGrad  = ctx.createRadialGradient(node.px, node.py, 0, node.px, node.py, gR2 * 3);
+        const glowStr = hitBySparse ? 0.55 + pulse * 0.25 : 0.38 + pulse * 0.15;
+        gGrad.addColorStop(0, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${glowStr})`);
+        gGrad.addColorStop(1, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0)`);
         ctx.beginPath();
-        ctx.arc(cx, cy, rr, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${ra})`;
-        ctx.lineWidth = (1.2 - i * 0.3) * dpr;
-        ctx.stroke();
+        ctx.arc(node.px, node.py, gR2 * 3, 0, Math.PI * 2);
+        ctx.fillStyle = gGrad;
+        ctx.fill();
+
+        // ── Change 3: Rank badge (#1, #2...) instead of score + dashed lines ──
+        const badgeAge = clamp01((wavePassT - 0.25) * 4);
+        if (badgeAge > 0.05) {
+          const badgeLabel = `#${ri + 1}`;
+          const bx  = node.px + (node.radius + 8) * dpr;
+          const by  = node.py - (node.radius + 8) * dpr;
+          const fs  = 10 * dpr;
+          const pad = 3.5 * dpr;
+
+          ctx.font = `700 ${fs}px 'SF Mono', 'Fira Code', monospace`;
+          const tw = ctx.measureText(badgeLabel).width;
+
+          // Pill background
+          ctx.save();
+          ctx.globalAlpha = badgeAge * (0.75 + pulse * 0.12);
+          ctx.fillStyle   = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.18)`;
+          const pillX = bx - pad, pillY = by - fs * 0.85 - pad;
+          const pillW = tw + pad * 2, pillH = fs + pad * 2;
+          const pr    = 4 * dpr;
+          ctx.beginPath();
+          ctx.roundRect(pillX, pillY, pillW, pillH, pr);
+          ctx.fill();
+
+          // Pill border
+          ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.45)`;
+          ctx.lineWidth   = 1 * dpr;
+          ctx.stroke();
+
+          // Badge text
+          ctx.fillStyle    = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},1)`;
+          ctx.textAlign    = "left";
+          ctx.textBaseline = "alphabetic";
+          ctx.shadowBlur   = 0;
+          ctx.fillText(badgeLabel, bx, by);
+          ctx.restore();
+
+          // Real score below badge
+          const realScore = resultScoresRef.current[ri];
+          if (realScore != null) {
+            const scoreA = clamp01((wavePassT - 0.45) * 4) * badgeAge;
+            if (scoreA > 0.05) {
+              ctx.font      = `500 ${9 * dpr}px 'SF Mono', 'Fira Code', monospace`;
+              ctx.textAlign = "left";
+              ctx.fillStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${scoreA * 0.7})`;
+              ctx.fillText(realScore.toFixed(3), bx, by + fs + pad);
+            }
+          }
+        }
       }
     }
 

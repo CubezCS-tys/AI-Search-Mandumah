@@ -4,6 +4,7 @@ import { useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { BookOpenText } from "lucide-react";
+import { mutate as swrMutate } from "swr";
 import SearchBar from "@/components/search/SearchBar";
 import NetworkBackground, {
   type NetworkHandle,
@@ -37,10 +38,14 @@ export default function Home() {
       setPhase("embedding");
 
       // Fire real search immediately so results are ready by the time
-      // the embedding animation finishes (~3.5 s from now)
-      search({ query, mode, top_k: 5 })
+      // the animation finishes. Use top_k:20 so the SWR cache key matches
+      // the search results page (avoids skeleton / duplicate fetch).
+      search({ query, mode, top_k: 20 })
         .then(res => {
           pendingScoresRef.current = res.results.map(r => r.score);
+          // Pre-populate the SWR cache so the search page has data instantly
+          const cacheKey = JSON.stringify({ query, mode, top_k: 20 });
+          swrMutate(cacheKey, res, { revalidate: false });
         })
         .catch(() => {
           // Leave pendingScoresRef empty — globe falls back to fake scores
