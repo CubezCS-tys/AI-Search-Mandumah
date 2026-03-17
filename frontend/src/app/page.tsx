@@ -9,6 +9,7 @@ import NetworkBackground, {
   type NetworkHandle,
 } from "@/components/network/NetworkBackground";
 import EmbeddingAnimation from "@/components/network/EmbeddingAnimation";
+import { search } from "@/lib/api";
 import type { SearchMode } from "@/types/search";
 
 type AnimPhase = "idle" | "embedding" | "searching";
@@ -23,6 +24,8 @@ export default function Home() {
   // Refs to hold latest values for callbacks (avoids stale closures)
   const searchQueryRef = useRef("");
   const searchModeRef = useRef<SearchMode>("hybrid");
+  // Holds the real scores fetched while the embedding animation plays
+  const pendingScoresRef = useRef<number[]>([]);
 
   const handleSearch = useCallback(
     (query: string, mode: SearchMode) => {
@@ -30,16 +33,27 @@ export default function Home() {
       setSearchMode(mode);
       searchQueryRef.current = query;
       searchModeRef.current = mode;
+      pendingScoresRef.current = [];
       setPhase("embedding");
+
+      // Fire real search immediately so results are ready by the time
+      // the embedding animation finishes (~3.5 s from now)
+      search({ query, mode, top_k: 5 })
+        .then(res => {
+          pendingScoresRef.current = res.results.map(r => r.score);
+        })
+        .catch(() => {
+          // Leave pendingScoresRef empty — globe falls back to fake scores
+        });
     },
     []
   );
 
-  /** Embedding done → trigger globe search → navigate */
+  /** Embedding done → trigger globe search with real scores → navigate */
   const handleEmbeddingDone = useCallback(async () => {
     setPhase("searching");
     if (networkRef.current) {
-      await networkRef.current.triggerSearch();
+      await networkRef.current.triggerSearch(pendingScoresRef.current);
     }
     const params = new URLSearchParams({
       q: searchQueryRef.current,
@@ -85,13 +99,13 @@ export default function Home() {
 
       {/* Embedding animation overlay */}
       <AnimatePresence>
-        {(phase === "embedding" || phase === "searching") && searchQuery && (
+        {phase === "embedding" && searchQuery && (
           <motion.div
             key="embedding"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
+            transition={{ duration: 0.5 }}
           >
             <EmbeddingAnimation
               query={searchQuery}

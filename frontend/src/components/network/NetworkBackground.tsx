@@ -30,7 +30,7 @@ interface Edge {
 }
 
 export interface NetworkHandle {
-  triggerSearch: () => Promise<void>;
+  triggerSearch: (scores?: number[]) => Promise<void>;
 }
 
 /* ── Config ─────────────────────────────────────────────────── */
@@ -125,6 +125,8 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
   const zoomRef = useRef({ current: 1, target: 1 });
   const dprRef = useRef(1);
   const sizeRef = useRef({ w: 0, h: 0 });
+  const resultIndicesRef = useRef<number[]>([]);
+  const resultScoresRef  = useRef<number[]>([]);
 
   /* ── Init ──────────────────────────────────────────────────── */
 
@@ -164,18 +166,48 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
   /* ── Trigger search ────────────────────────────────────────── */
 
   useImperativeHandle(ref, () => ({
-    triggerSearch: () => new Promise<void>((resolve) => {
+    triggerSearch: (scores?: number[]) => new Promise<void>((resolve) => {
       searchActiveRef.current = true;
       searchStartRef.current = elapsedRef.current;
       resolveRef.current = resolve;
 
-      // Pulse delay based on depth (front → back)
+      // Pick 5 deterministic "result" nodes spread across clusters
       const nodes = nodesRef.current;
-      nodes.forEach(n => {
-        n.pulseDelay = clamp01((n.pz + 1) / 2) * 1.5;
+      const resultIndices: number[] = [];
+      const targetClusters = [1, 3, 5, 0, 6]; // deterministic cluster picks
+      for (const clusterTarget of targetClusters) {
+        // Find the most front-facing node in each target cluster
+        let best = -1, bestZ = Infinity;
+        nodes.forEach((n, i) => {
+          if (n.cluster === clusterTarget && n.pz < bestZ) {
+            bestZ = n.pz;
+            best  = i;
+          }
+        });
+        if (best >= 0) resultIndices.push(best);
+      }
+      resultIndicesRef.current = resultIndices;
+      // Store real scores (or empty — draw will fall back to fake)
+      resultScoresRef.current = scores ?? [];
+
+      // Each result node gets a staggered "beam arrival" time
+      resultIndices.forEach((ni, rank) => {
+        nodes[ni].pulseDelay = rank * 0.28; // staggered arrivals
       });
 
-      zoomRef.current.target = 1.6;
+      // Non-result nodes get a later, softer delay for ripple propagation
+      nodes.forEach((n, i) => {
+        if (!resultIndices.includes(i)) {
+          // Propagation: delay based on angular distance to nearest result
+          const minDist = resultIndices.reduce((best, ri) => {
+            const d = sphereDist(n.theta, n.phi, nodes[ri].theta, nodes[ri].phi);
+            return Math.min(best, d);
+          }, Math.PI);
+          n.pulseDelay = 0.6 + (minDist / Math.PI) * 1.2;
+        }
+      });
+
+      zoomRef.current.target = 1.45;
     }),
   }), []);
 
@@ -394,16 +426,116 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
     // ── Scan rings ───────────────────────────────────────────
 
     if (searchActiveRef.current && searchT >= 0) {
-      for (let i = 0; i < 3; i++) {
-        const rp = searchT * 0.5 - i * 0.2;
+      const resultIndices = resultIndicesRef.current;
+
+      // ── Beams: center → each result node ──────────────────
+      for (let ri = 0; ri < resultIndices.length; ri++) {
+        const ni   = resultIndices[ri];
+        const node = nodes[ni];
+        const arriveAt = node.pulseDelay; // staggered beam arrival
+        const beamAge  = searchT - arriveAt;
+        if (beamAge < 0) continue;
+
+        // Beam travels from globe center to node: draw line 0→1 over 0.25s
+        const beamT = clamp01(beamAge / 0.25);
+        const bAlpha = (1 - Math.max(0, (beamAge - 0.4) / 0.4)) * 0.55;
+
+        if (beamT > 0 && bAlpha > 0) {
+          const tx = lerp(cx, node.px, beamT);
+          const ty = lerp(cy, node.py, beamT);
+          const grad = ctx.createLinearGradient(cx, cy, tx, ty);
+          grad.addColorStop(0, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0)`);
+          grad.addColorStop(0.6, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${bAlpha * 0.4})`);
+          grad.addColorStop(1,   `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${bAlpha})`);
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(tx, ty);
+          ctx.strokeStyle = grad;
+          ctx.lineWidth = (1.5 - ri * 0.15) * dpr;
+          ctx.stroke();
+        }
+
+        // ── Result-node halo (sustained glow ring) ───────────
+        if (beamAge > 0.2) {
+          const haloAge = beamAge - 0.2;
+          // Expanding ring on arrival
+          const ringT   = clamp01(haloAge / 0.35);
+          const ringR   = (4 + ringT * 22) * dpr;
+          const ringA   = (1 - ringT) * 0.55;
+          if (ringA > 0.01) {
+            ctx.beginPath();
+            ctx.arc(node.px, node.py, ringR, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${ringA})`;
+            ctx.lineWidth = (2 - ringT) * dpr;
+            ctx.stroke();
+          }
+
+          // Sustained smaller halo that pulses
+          const pulse = 0.5 + 0.5 * Math.sin(haloAge * 6 + ri);
+          const gR2   = (node.radius + 3 + pulse * 4) * dpr;
+          const gGrad = ctx.createRadialGradient(node.px, node.py, 0, node.px, node.py, gR2 * 3);
+          gGrad.addColorStop(0, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${0.45 + pulse * 0.2})`);
+          gGrad.addColorStop(1, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0)`);
+          ctx.beginPath();
+          ctx.arc(node.px, node.py, gR2 * 3, 0, Math.PI * 2);
+          ctx.fillStyle = gGrad;
+          ctx.fill();
+
+          // Score label: "sim: 0.92" style
+          const realScore  = resultScoresRef.current[ri];
+          const scoreVal  = realScore != null
+            ? realScore.toFixed(2)
+            : (0.78 + seededRand(ni) * 0.19).toFixed(2);
+          const labelA   = clamp01((haloAge - 0.3) * 3) * (0.7 + pulse * 0.15);
+          if (labelA > 0.05) {
+            ctx.font      = `600 ${10 * dpr}px 'SF Mono', 'Fira Code', monospace`;
+            ctx.textAlign = "center";
+            ctx.fillStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${labelA})`;
+            ctx.fillText(`${scoreVal}`, node.px, node.py - (node.radius + 10) * dpr);
+          }
+        }
+      }
+
+      // ── Cross-result similarity lines (K-NN connections) ──────
+      if (searchT > 0.5 && resultIndices.length > 1) {
+        for (let i = 0; i < resultIndices.length; i++) {
+          for (let j = i + 1; j < resultIndices.length; j++) {
+            const na = nodes[resultIndices[i]];
+            const nb = nodes[resultIndices[j]];
+            const lineAge = searchT - Math.max(na.pulseDelay, nb.pulseDelay) - 0.3;
+            if (lineAge < 0) continue;
+
+            const lineA = clamp01(lineAge / 0.3) * 0.28;
+            const pulse = 0.6 + 0.4 * Math.sin(searchT * 3 + i + j);
+            if (lineA * pulse < 0.01) continue;
+
+            const grad = ctx.createLinearGradient(na.px, na.py, nb.px, nb.py);
+            grad.addColorStop(0,   `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${lineA * pulse})`);
+            grad.addColorStop(0.5, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${lineA * pulse * 0.5})`);
+            grad.addColorStop(1,   `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${lineA * pulse})`);
+            ctx.beginPath();
+            ctx.moveTo(na.px, na.py);
+            ctx.lineTo(nb.px, nb.py);
+            ctx.strokeStyle = grad;
+            ctx.lineWidth   = 1.2 * dpr;
+            ctx.setLineDash([4 * dpr, 6 * dpr]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        }
+      }
+
+      // ── Subtle single scan ring from center (ambient) ──────
+      for (let i = 0; i < 2; i++) {
+        const rp = searchT * 0.42 - i * 0.22;
         if (rp <= 0) continue;
-        const rr = rp * Rdpr * 1.2;
-        const ra = Math.max(0, 0.1 - rp * 0.035);
+        const rr = rp * Rdpr * 1.15;
+        const ra = Math.max(0, 0.07 - rp * 0.025) * (1 - i * 0.4);
         if (ra <= 0) continue;
         ctx.beginPath();
         ctx.arc(cx, cy, rr, 0, Math.PI * 2);
         ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${ra})`;
-        ctx.lineWidth = (1.8 - i * 0.4) * dpr;
+        ctx.lineWidth = (1.2 - i * 0.3) * dpr;
         ctx.stroke();
       }
     }
