@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+/* ── Design tokens ──────────────────────────────────────────── */
+
+:root {
+  --bg-primary: #fafafa;
+  --bg-secondary: #ffffff;
+  --bg-elevated: #ffffff;
+  --text-primary: #1a1a2e;
+  --text-secondary: #4a4a68;
+  --text-muted: #8889a0;
+  --border: #e5e5ea;
+  --border-subtle: #f0f0f3;
+  --accent: #9B1B30;
+  --accent-hover: #7A1526;
+  --accent-subtle: #fdf2f4;
+  --highlight: #fce4ec;
+  --highlight-text: #7A1526;
+  --surface-glass: rgba(255, 255, 255, 0.80);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.03);
+  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.07), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 20px;
+}
+
+@theme inline {
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-highlight: var(--highlight);
+  --color-highlight-text: var(--highlight-text);
+  --font-sans: var(--font-inter);
+  --font-arabic: var(--font-tajawal);
+}
+
+/* ── Base ────────────────────────────────────────────────────── */
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-inter), var(--font-tajawal), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Arabic text gets generous line spacing */
+[lang="ar"], .font-arabic {
+  line-height: 1.9;
+  font-family: var(--font-tajawal), var(--font-inter), system-ui, sans-serif;
+}
+
+/* ── Utilities ───────────────────────────────────────────────── */
+
+.glass {
+  background: var(--surface-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* Smooth focus rings */
+.focus-ring {
+  @apply outline-none ring-2 ring-accent/40 ring-offset-2 ring-offset-bg-primary;
+}
+
+/* ── Hero background: network canvas replaces old dot grid ───── */
+
+.hero-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--border-subtle) 25%,
+    var(--bg-secondary) 50%,
+    var(--border-subtle) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* ── Document viewer ─────────────────────────────────────────── */
+
+/* Text selection on transparent word overlays */
+.doc-word::selection {
+  background: rgba(0, 120, 215, 0.35);
+  color: transparent;
+}
