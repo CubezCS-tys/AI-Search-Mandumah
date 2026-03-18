@@ -17,6 +17,15 @@ import {
   GitCompareArrows,
   RefreshCw,
   ArrowUp,
+  BookOpen,
+  FlaskConical,
+  BarChart3,
+  Lightbulb,
+  ClipboardList,
+  Library,
+  FileSearch,
+  BookMarked,
+  type LucideIcon,
 } from "lucide-react";
 
 /* ── Types ──────────────────────────────────────────────────── */
@@ -42,18 +51,18 @@ interface ChatPanelProps {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const SUGGESTED_QUESTIONS = [
-  { text: "ما هي الفكرة الرئيسية لهذا البحث؟", icon: "📄" },
-  { text: "ما المنهجية المستخدمة؟", icon: "🔬" },
-  { text: "ما أبرز النتائج؟", icon: "📊" },
-  { text: "ما هي التوصيات؟", icon: "💡" },
+const SUGGESTED_QUESTIONS: { text: string; icon: LucideIcon }[] = [
+  { text: "ما هي الفكرة الرئيسية لهذا البحث؟", icon: BookOpen },
+  { text: "ما المنهجية المستخدمة؟", icon: FlaskConical },
+  { text: "ما أبرز النتائج؟", icon: BarChart3 },
+  { text: "ما هي التوصيات؟", icon: Lightbulb },
 ];
 
-const EXTRACTION_TEMPLATES = [
-  { text: "استخرج جدول المنهجية المستخدمة في البحث", label: "جدول المنهجية", icon: "📋" },
-  { text: "استخرج قائمة المراجع والمصادر المذكورة في البحث", label: "قائمة المراجع", icon: "📚" },
-  { text: "أنشئ تقريراً مصغراً عن هذا البحث يتضمن: العنوان، المؤلفين، السنة، المنهجية، النتائج الرئيسية، ونقاط القوة والضعف", label: "تقرير مصغر", icon: "📝" },
-  { text: "استخرج جميع المصطلحات والتعريفات الرئيسية الواردة في البحث", label: "مصطلحات وتعريفات", icon: "📖" },
+const EXTRACTION_TEMPLATES: { text: string; label: string; icon: LucideIcon }[] = [
+  { text: "استخرج جدول المنهجية المستخدمة في البحث", label: "جدول المنهجية", icon: ClipboardList },
+  { text: "استخرج قائمة المراجع والمصادر المذكورة في البحث", label: "قائمة المراجع", icon: Library },
+  { text: "أنشئ تقريراً مصغراً عن هذا البحث يتضمن: العنوان، المؤلفين، السنة، المنهجية، النتائج الرئيسية، ونقاط القوة والضعف", label: "تقرير مصغر", icon: FileSearch },
+  { text: "استخرج جميع المصطلحات والتعريفات الرئيسية الواردة في البحث", label: "مصطلحات وتعريفات", icon: BookMarked },
 ];
 
 /* ── Token estimation ──────────────────────────────────────── */
@@ -614,8 +623,8 @@ export default function ChatPanel({
                   className="group flex items-start gap-2 rounded-xl border border-border/60 px-3 py-2.5 text-right text-[13px] text-text-secondary hover:border-accent/30 hover:bg-accent/[0.03] transition-all duration-200 font-arabic"
                   dir="rtl"
                 >
-                  <span className="text-base leading-none mt-0.5 group-hover:scale-110 transition-transform">
-                    {q.icon}
+                  <span className="mt-0.5 text-accent/70 group-hover:scale-110 transition-transform">
+                    <q.icon size={16} />
                   </span>
                   <span className="leading-snug">{q.text}</span>
                 </button>
@@ -640,8 +649,8 @@ export default function ChatPanel({
                       className="group flex items-start gap-2 rounded-xl border border-accent/20 bg-accent/[0.02] px-3 py-2.5 text-right text-[13px] text-text-secondary hover:border-accent/40 hover:bg-accent/[0.06] transition-all duration-200 font-arabic"
                       dir="rtl"
                     >
-                      <span className="text-base leading-none mt-0.5 group-hover:scale-110 transition-transform">
-                        {t.icon}
+                      <span className="mt-0.5 text-accent/70 group-hover:scale-110 transition-transform">
+                        <t.icon size={16} />
                       </span>
                       <span className="leading-snug">{t.label}</span>
                     </button>

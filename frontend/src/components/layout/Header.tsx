@@ -1,19 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpenText } from "lucide-react";
+import Image from "next/image";
 
 export default function Header({ compact = false }: { compact?: boolean }) {
   return (
     <header className="sticky top-0 z-40 border-b border-border/50 bg-white/80 backdrop-blur-xl">
       <div className="mx-auto flex h-13 max-w-5xl items-center justify-between px-5">
-        <Link href="/" className="flex items-center gap-2 group">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-accent text-white">
-            <BookOpenText size={15} />
-          </div>
-          <span className="font-arabic text-[15px] font-semibold text-text-primary">
-            المنظومة
-          </span>
+        <Link href="/" className="flex items-center gap-1.5 group">
+          <Image
+            src="/logo_ar.svg"
+            alt="المنظومة"
+            width={90}
+            height={46}
+            className="h-7 w-auto"
+            priority
+          />
         </Link>
 
         <div className="flex items-center gap-3 text-sm">
