@@ -11,7 +11,7 @@ Supports:
     - CLI for quick testing
 
 Usage:
-    python -m pipeline.search --query "أثر التعلم الإلكتروني" --top-k 5
+    python -m services.search --query "أثر التعلم الإلكتروني" --top-k 5
 """
 
 from __future__ import annotations

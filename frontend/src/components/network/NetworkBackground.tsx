@@ -31,6 +31,7 @@ interface Edge {
 
 export interface NetworkHandle {
   triggerSearch: (scores?: number[]) => Promise<void>;
+  getResultPositions: () => { x: number; y: number }[];
 }
 
 /* ── Config ─────────────────────────────────────────────────── */
@@ -128,6 +129,9 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
   const sizeRef = useRef({ w: 0, h: 0 });
   const resultIndicesRef = useRef<number[]>([]);
   const resultScoresRef  = useRef<number[]>([]);
+  const hnswPathsRef     = useRef<number[][]>([]);
+  const resultScreenPosRef = useRef<{ x: number; y: number }[]>([]);
+  const logoImgRef = useRef<HTMLImageElement | null>(null);
 
   /* ── Init ──────────────────────────────────────────────────── */
 
@@ -167,39 +171,69 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
   /* ── Trigger search ────────────────────────────────────────── */
 
   useImperativeHandle(ref, () => ({
+    getResultPositions: () => resultScreenPosRef.current,
     triggerSearch: (scores?: number[]) => new Promise<void>((resolve) => {
       searchActiveRef.current = true;
       searchStartRef.current = elapsedRef.current;
       resolveRef.current = resolve;
 
-      // Pick 5 deterministic "result" nodes spread across clusters
       const nodes = nodesRef.current;
+      const edges = edgesRef.current;
+
+      // Store real scores
+      if (scores && scores.length > 0) {
+        resultScoresRef.current = scores.slice(0, 5);
+      } else {
+        resultScoresRef.current = [];
+      }
+
+      // Pick 5 deterministic "result" nodes spread across clusters
+      const targetClusters = [1, 3, 5, 0, 6];
       const resultIndices: number[] = [];
-      const targetClusters = [1, 3, 5, 0, 6]; // deterministic cluster picks
-      for (const clusterTarget of targetClusters) {
-        // Find the most front-facing node in each target cluster
+      for (const tc of targetClusters) {
         let best = -1, bestZ = Infinity;
         nodes.forEach((n, i) => {
-          if (n.cluster === clusterTarget && n.pz < bestZ) {
+          if (n.cluster === tc && n.pz < bestZ && !resultIndices.includes(i)) {
             bestZ = n.pz;
-            best  = i;
+            best = i;
           }
         });
         if (best >= 0) resultIndices.push(best);
       }
       resultIndicesRef.current = resultIndices;
-      // Store real scores (or empty — draw will fall back to fake)
-      resultScoresRef.current = scores ?? [];
+
+      // Build HNSW-like hop paths via BFS on edge adjacency
+      const adj = new Map<number, number[]>();
+      for (const e of edges) {
+        if (!adj.has(e.a)) adj.set(e.a, []);
+        if (!adj.has(e.b)) adj.set(e.b, []);
+        adj.get(e.a)!.push(e.b);
+        adj.get(e.b)!.push(e.a);
+      }
+
+      const paths: number[][] = [];
+      for (const ri of resultIndices) {
+        const path = [ri];
+        let current = ri;
+        for (let step = 0; step < 3; step++) {
+          const neighbors = adj.get(current) || [];
+          const next = neighbors.find(n => !path.includes(n));
+          if (next === undefined) break;
+          path.push(next);
+          current = next;
+        }
+        paths.push(path.reverse());
+      }
+      hnswPathsRef.current = paths;
 
       // Each result node gets a staggered "beam arrival" time
       resultIndices.forEach((ni, rank) => {
-        nodes[ni].pulseDelay = rank * 0.28; // staggered arrivals
+        nodes[ni].pulseDelay = rank * 0.28;
       });
 
       // Non-result nodes get a later, softer delay for ripple propagation
       nodes.forEach((n, i) => {
         if (!resultIndices.includes(i)) {
-          // Propagation: delay based on angular distance to nearest result
           const minDist = resultIndices.reduce((best, ri) => {
             const d = sphereDist(n.theta, n.phi, nodes[ri].theta, nodes[ri].phi);
             return Math.min(best, d);
@@ -275,7 +309,25 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
       projectNode(node, rot.y, rot.x, R, w / 2, h / 2, persp);
       node.px *= dpr;
       node.py *= dpr;
+    }
 
+    // Update result screen positions (CSS px, zoom-adjusted)
+    if (searchActiveRef.current) {
+      const zc = zoom.current;
+      resultScreenPosRef.current = resultIndicesRef.current.map(ni => {
+        const n = nodes[ni];
+        const cssX = n.px / dpr;
+        const cssY = n.py / dpr;
+        return {
+          x: w / 2 + (cssX - w / 2) * zc,
+          y: h / 2 + (cssY - h / 2) * zc,
+        };
+      });
+    } else {
+      resultScreenPosRef.current = [];
+    }
+
+    for (const node of nodes) {
       // Brightness (dt-based smooth decay)
       if (searchActiveRef.current && searchT >= 0) {
         const at = searchT - node.pulseDelay;
@@ -587,6 +639,30 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
       }
     }
 
+    // ── Logo at globe center during search ─────────────────
+    if (searchActiveRef.current && searchT >= 0 && logoImgRef.current) {
+      const logoAlpha = clamp01(searchT * 3) * 0.7;
+      if (logoAlpha > 0.01) {
+        const logoH = Rdpr * 0.28;
+        const logoW = logoH * (logoImgRef.current.naturalWidth / logoImgRef.current.naturalHeight);
+
+        // Soft radial glow behind logo
+        const glowStrength = logoAlpha * 0.22;
+        const lgGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, logoH * 1.5);
+        lgGrad.addColorStop(0, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${glowStrength})`);
+        lgGrad.addColorStop(1, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0)`);
+        ctx.beginPath();
+        ctx.arc(cx, cy, logoH * 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = lgGrad;
+        ctx.fill();
+
+        ctx.save();
+        ctx.globalAlpha = logoAlpha;
+        ctx.drawImage(logoImgRef.current, cx - logoW / 2, cy - logoH / 2, logoW, logoH);
+        ctx.restore();
+      }
+    }
+
     ctx.restore();
     animRef.current = requestAnimationFrame(draw);
   }, []);
@@ -598,6 +674,11 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
     if (!canvas) return;
 
     initNetwork();
+
+    // Preload logo for canvas rendering
+    const img = new (window.Image)();
+    img.src = "/logo_ar.svg";
+    img.onload = () => { logoImgRef.current = img; };
 
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);

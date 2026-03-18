@@ -112,6 +112,8 @@ function PageView({
   highlight,
   activeMatchId,
   matchIdOffset,
+  citationMatchIds,
+  globalWordOffset,
   pageIndex,
 }: {
   page: OcrPage;
@@ -120,6 +122,8 @@ function PageView({
   highlight: boolean;
   activeMatchId: number;
   matchIdOffset: number;
+  citationMatchIds: Set<number>;
+  globalWordOffset: number;
   pageIndex: number;
 }) {
   // Use actual raster dimensions for precise alignment
@@ -128,6 +132,89 @@ function PageView({
   const pageWidthPx = page.rasterWidth || Math.round(page.width * 200);
   const pageHeightPx = page.rasterHeight || Math.round(page.height * 200);
   const textLayerRef = useRef<HTMLDivElement>(null);
+
+  // Compute unified highlight regions by grouping consecutive same-type highlighted words on the same line
+  const highlightRegions = useMemo(() => {
+    const PAD = 3; // px padding around groups
+    const LINE_THRESH = 0.5; // words within 50% height difference = same line
+    const regions: { left: number; top: number; width: number; height: number; type: "citation" | "active" | "match" }[] = [];
+
+    type WordInfo = { rect: { left: number; top: number; width: number; height: number }; type: "citation" | "active" | "match" };
+    const tagged: WordInfo[] = [];
+
+    for (let i = 0; i < page.words.length; i++) {
+      const word = page.words[i];
+      if (word.polygon.length < 8) continue;
+      const rect = polygonToRect(word.polygon, scaleX, scaleY);
+      if (rect.width < 1 || rect.height < 1) continue;
+
+      const isCitation = citationMatchIds.has(globalWordOffset + i);
+      const isMatch = wordMatchesQuery(word.content, searchTokens);
+      const matchId = isMatch ? matchIdOffset + i : undefined;
+      const isActive = matchId !== undefined && matchId === activeMatchId;
+
+      if (isCitation) {
+        tagged.push({ rect, type: "citation" });
+      } else if (highlight && isMatch) {
+        tagged.push({ rect, type: isActive ? "active" : "match" });
+      } else {
+        tagged.push(null as unknown as WordInfo); // placeholder
+      }
+    }
+
+    let groupStart = -1;
+    let groupType: "citation" | "active" | "match" | null = null;
+    let groupTop = 0, groupBottom = 0, groupLeft = 0, groupRight = 0;
+
+    const flushGroup = () => {
+      if (groupStart >= 0 && groupType) {
+        regions.push({
+          left: groupLeft - PAD,
+          top: groupTop - PAD,
+          width: groupRight - groupLeft + PAD * 2,
+          height: groupBottom - groupTop + PAD * 2,
+          type: groupType,
+        });
+      }
+      groupStart = -1;
+      groupType = null;
+    };
+
+    for (let i = 0; i < tagged.length; i++) {
+      const item = tagged[i];
+      if (!item || !item.rect) {
+        flushGroup();
+        continue;
+      }
+      const { rect, type } = item;
+      const midY = rect.top + rect.height / 2;
+
+      if (groupStart >= 0 && groupType === type) {
+        // Check if same line (vertical overlap)
+        const groupMidY = (groupTop + groupBottom) / 2;
+        const groupH = groupBottom - groupTop;
+        if (Math.abs(midY - groupMidY) < groupH * LINE_THRESH) {
+          // Extend group
+          groupLeft = Math.min(groupLeft, rect.left);
+          groupRight = Math.max(groupRight, rect.left + rect.width);
+          groupTop = Math.min(groupTop, rect.top);
+          groupBottom = Math.max(groupBottom, rect.top + rect.height);
+          continue;
+        }
+      }
+      // New group
+      flushGroup();
+      groupStart = i;
+      groupType = type;
+      groupLeft = rect.left;
+      groupRight = rect.left + rect.width;
+      groupTop = rect.top;
+      groupBottom = rect.top + rect.height;
+    }
+    flushGroup();
+
+    return regions;
+  }, [page.words, scaleX, scaleY, citationMatchIds, globalWordOffset, searchTokens, highlight, activeMatchId, matchIdOffset]);
 
   // After mount, measure each word span and apply scaleX for exact fit
   useEffect(() => {
@@ -194,6 +281,42 @@ function PageView({
           pointerEvents: "none",
         }}
       >
+        {/* Unified highlight regions */}
+        {highlightRegions.map((r, idx) => {
+          const styles: React.CSSProperties =
+            r.type === "citation"
+              ? {
+                  background: "linear-gradient(180deg, rgba(59,130,246,0.12) 0%, rgba(59,130,246,0.22) 100%)",
+                  border: "1.5px solid rgba(59,130,246,0.35)",
+                  boxShadow: "0 1px 6px rgba(59,130,246,0.15)",
+                }
+              : r.type === "active"
+                ? {
+                    background: "linear-gradient(180deg, rgba(255,140,0,0.15) 0%, rgba(255,140,0,0.28) 100%)",
+                    border: "1.5px solid rgba(255,140,0,0.4)",
+                    boxShadow: "0 1px 6px rgba(255,140,0,0.2)",
+                  }
+                : {
+                    background: "linear-gradient(180deg, rgba(255,200,0,0.1) 0%, rgba(255,200,0,0.22) 100%)",
+                    border: "1.5px solid rgba(255,180,0,0.35)",
+                  };
+          return (
+            <div
+              key={`hl-${idx}`}
+              style={{
+                position: "absolute",
+                left: r.left,
+                top: r.top,
+                width: r.width,
+                height: r.height,
+                borderRadius: 4,
+                pointerEvents: "none",
+                transition: "opacity 0.3s",
+                ...styles,
+              }}
+            />
+          );
+        })}
         {page.words.map((word, i) => {
           if (word.polygon.length < 8) return null;
           const rect = polygonToRect(word.polygon, scaleX, scaleY);
@@ -203,7 +326,6 @@ function PageView({
           const fontSize = rect.height * 0.75;
           const isMatch = wordMatchesQuery(word.content, searchTokens);
           const matchId = isMatch ? matchIdOffset + i : undefined;
-          const isActive = matchId !== undefined && matchId === activeMatchId;
 
           return (
             <span
@@ -212,6 +334,7 @@ function PageView({
               dir={dir}
               data-tw={rect.width.toFixed(1)}
               data-match-id={matchId}
+              data-global-id={globalWordOffset + i}
               style={{
                 position: "absolute",
                 left: rect.left,
@@ -227,13 +350,6 @@ function PageView({
                 overflow: "visible",
                 pointerEvents: "auto",
                 transformOrigin: dir === "rtl" ? "right top" : "left top",
-                backgroundColor:
-                  highlight && isMatch
-                    ? isActive
-                      ? "rgba(255, 120, 0, 0.5)"
-                      : "rgba(255, 200, 0, 0.35)"
-                    : "transparent",
-                borderRadius: isMatch ? 2 : 0,
               }}
             >
               {word.content}
@@ -263,9 +379,11 @@ function PageView({
 interface DocumentViewerProps {
   docId: string;
   query?: string;
+  chatOpen?: boolean;
+  citationText?: string | null;
 }
 
-export default function DocumentViewer({ docId, query = "" }: DocumentViewerProps) {
+export default function DocumentViewer({ docId, query = "", chatOpen = false, citationText = null }: DocumentViewerProps) {
   const router = useRouter();
   const [ocrData, setOcrData] = useState<OcrData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -310,6 +428,58 @@ export default function DocumentViewer({ docId, query = "" }: DocumentViewerProp
   useEffect(() => {
     setCurrentMatchIdx(-1);
   }, [matchIds]);
+
+  // ── Citation highlighting ────────────────────────────────────
+  // Build a consecutive-word match: find the sequence of OCR words that
+  // matches the citation text (stripped of tashkeel).
+  const citationMatchIds = useMemo(() => {
+    if (!citationText || !ocrData?.pages?.length) return new Set<number>();
+
+    const citNorm = stripTashkeel(citationText).toLowerCase().trim();
+    if (!citNorm) return new Set<number>();
+
+    // Tokenize citation
+    const citTokens = citNorm.split(/\s+/).filter(Boolean);
+    if (!citTokens.length) return new Set<number>();
+
+    const matched = new Set<number>();
+    let globalIdx = 0;
+
+    for (const page of ocrData.pages) {
+      const words = page.words;
+      for (let i = 0; i <= words.length - citTokens.length; i++) {
+        let ok = true;
+        for (let j = 0; j < citTokens.length; j++) {
+          const wordNorm = stripTashkeel(words[i + j].content).toLowerCase();
+          if (!wordNorm.includes(citTokens[j])) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) {
+          for (let j = 0; j < citTokens.length; j++) {
+            matched.add(globalIdx + i + j);
+          }
+          // Don't break — mark all occurrences, but first is enough for scroll
+        }
+      }
+      globalIdx += words.length;
+    }
+
+    return matched;
+  }, [citationText, ocrData]);
+
+  // Auto-scroll to first citation match
+  useEffect(() => {
+    if (!citationMatchIds.size || !containerRef.current) return;
+    const firstId = citationMatchIds.values().next().value;
+    // Small delay so DOM updates first
+    const t = setTimeout(() => {
+      const el = containerRef.current?.querySelector(`[data-global-id="${firstId}"]`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+    return () => clearTimeout(t);
+  }, [citationMatchIds]);
 
   // Fetch OCR data
   useEffect(() => {
@@ -530,28 +700,31 @@ export default function DocumentViewer({ docId, query = "" }: DocumentViewerProp
             highlight={highlight}
             activeMatchId={currentMatchIdx >= 0 ? matchIds[currentMatchIdx] : -1}
             matchIdOffset={matchOffsets[i] ?? 0}
+            citationMatchIds={citationMatchIds}
+            globalWordOffset={matchOffsets[i] ?? 0}
             pageIndex={i}
           />
         ))}
       </div>
 
-      {/* Scroll to top / bottom — fixed bottom-right */}
+      {/* Scroll to top / bottom */}
       <div
-        className="fixed bottom-5 right-5 z-40 flex flex-col gap-2"
+        className="fixed z-[60] flex flex-col gap-2 transition-all duration-500"
+        style={{ top: 100, right: chatOpen ? "calc(45% + 8px)" : 8 }}
       >
         <button
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          className="flex items-center justify-center w-9 h-9 rounded-full bg-white/90 border border-border-subtle shadow-md cursor-pointer hover:bg-gray-50 transition-colors"
+          className="flex items-center justify-center w-10 h-10 rounded-full bg-white border border-gray-300 shadow-lg cursor-pointer hover:bg-gray-100 hover:scale-110 active:scale-95 transition-all duration-150"
           title="الأعلى"
         >
-          <ChevronsUp size={18} className="text-text-secondary" />
+          <ChevronsUp size={20} className="text-gray-700" />
         </button>
         <button
           onClick={() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" })}
-          className="flex items-center justify-center w-9 h-9 rounded-full bg-white/90 border border-border-subtle shadow-md cursor-pointer hover:bg-gray-50 transition-colors"
+          className="flex items-center justify-center w-10 h-10 rounded-full bg-white border border-gray-300 shadow-lg cursor-pointer hover:bg-gray-100 hover:scale-110 active:scale-95 transition-all duration-150"
           title="الأسفل"
         >
-          <ChevronsDown size={18} className="text-text-secondary" />
+          <ChevronsDown size={20} className="text-gray-700" />
         </button>
       </div>
     </div>

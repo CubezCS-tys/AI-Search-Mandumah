@@ -2,16 +2,18 @@
 
 import { useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
-import { BookOpenText } from "lucide-react";
-import { mutate as swrMutate } from "swr";
 import SearchBar from "@/components/search/SearchBar";
 import NetworkBackground, {
   type NetworkHandle,
 } from "@/components/network/NetworkBackground";
-import EmbeddingAnimation from "@/components/network/EmbeddingAnimation";
+import SonarPulseAnimation from "@/components/network/SonarPulseAnimation";
+import SearchPreview from "@/components/network/SearchPreview";
 import { search } from "@/lib/api";
-import type { SearchMode } from "@/types/search";
+import { setPrefetchedSearch } from "@/lib/hooks/useSearch";
+import type { SearchMode, SearchResponse } from "@/types/search";
+import type { SearchResultItem } from "@/types/search";
 
 type AnimPhase = "idle" | "embedding" | "searching";
 
@@ -22,11 +24,13 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
 
-  // Refs to hold latest values for callbacks (avoids stale closures)
   const searchQueryRef = useRef("");
   const searchModeRef = useRef<SearchMode>("hybrid");
-  // Holds the real scores fetched while the embedding animation plays
   const pendingScoresRef = useRef<number[]>([]);
+  const [previewResults, setPreviewResults] = useState<SearchResultItem[]>([]);
+  const searchPromiseRef = useRef<Promise<SearchResponse | null> | null>(null);
+  const revealCanvasRef = useRef<HTMLCanvasElement>(null);
+  const revealRafRef = useRef(0);
 
   const handleSearch = useCallback(
     (query: string, mode: SearchMode) => {
@@ -35,27 +39,80 @@ export default function Home() {
       searchQueryRef.current = query;
       searchModeRef.current = mode;
       pendingScoresRef.current = [];
+      setPreviewResults([]);
       setPhase("embedding");
 
-      // Fire real search immediately so results are ready by the time
-      // the animation finishes. Use top_k:20 so the SWR cache key matches
-      // the search results page (avoids skeleton / duplicate fetch).
-      search({ query, mode, top_k: 20 })
+      const promise = search({ query, mode, top_k: 20 })
         .then(res => {
           pendingScoresRef.current = res.results.map(r => r.score);
-          // Pre-populate the SWR cache so the search page has data instantly
-          const cacheKey = JSON.stringify({ query, mode, top_k: 20 });
-          swrMutate(cacheKey, res, { revalidate: false });
+          setPreviewResults(res.results.slice(0, 5));
+          setPrefetchedSearch({ query, mode, top_k: 20 }, res);
+          return res;
         })
-        .catch(() => {
-          // Leave pendingScoresRef empty — globe falls back to fake scores
-        });
+        .catch(() => null);
+      searchPromiseRef.current = promise;
     },
     []
   );
 
-  /** Embedding done → trigger globe search with real scores → navigate */
   const handleEmbeddingDone = useCallback(async () => {
+    // Wait for API results before transitioning to search phase
+    await searchPromiseRef.current;
+
+    // Circular reveal: white overlay with expanding hole from center
+    const canvas = revealCanvasRef.current;
+    if (canvas) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      canvas.width = vw * dpr;
+      canvas.height = vh * dpr;
+      canvas.style.width = `${vw}px`;
+      canvas.style.height = `${vh}px`;
+      canvas.style.display = "block";
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        const maxR = Math.sqrt(vw * vw + vh * vh) / 2;
+        const ccx = (vw * dpr) / 2;
+        const ccy = (vh * dpr) / 2;
+        const start = performance.now();
+        const DURATION = 700;
+
+        const animateReveal = (now: number) => {
+          const t = Math.min((now - start) / DURATION, 1);
+          const eased = 1 - (1 - t) * (1 - t);
+          const r = eased * maxR * dpr;
+
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, 0, canvas.width, canvas.height);
+          ctx.arc(ccx, ccy, r, 0, Math.PI * 2, true);
+          ctx.fillStyle = "rgba(250,250,250,0.95)";
+          ctx.fill();
+          ctx.restore();
+
+          // Accent glow ring at the expanding edge
+          if (r > 0) {
+            const glowAlpha = 0.25 * (1 - t * 0.7);
+            ctx.beginPath();
+            ctx.arc(ccx, ccy, r, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(155,27,48,${glowAlpha})`;
+            ctx.lineWidth = 6 * dpr;
+            ctx.stroke();
+          }
+
+          if (t < 1) {
+            revealRafRef.current = requestAnimationFrame(animateReveal);
+          } else {
+            canvas.style.display = "none";
+          }
+        };
+        revealRafRef.current = requestAnimationFrame(animateReveal);
+      }
+    }
+
     setPhase("searching");
     if (networkRef.current) {
       await networkRef.current.triggerSearch(pendingScoresRef.current);
@@ -69,7 +126,6 @@ export default function Home() {
 
   return (
     <div className="relative flex min-h-svh flex-col items-center justify-center px-6 overflow-hidden">
-      {/* Animated network globe background */}
       <NetworkBackground ref={networkRef} />
 
       {/* Vignette overlay */}
@@ -109,10 +165,10 @@ export default function Home() {
             key="embedding"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={{ opacity: 0, transition: { duration: 0.25 } }}
             transition={{ duration: 0.5 }}
           >
-            <EmbeddingAnimation
+            <SonarPulseAnimation
               query={searchQuery}
               onEmbeddingDone={handleEmbeddingDone}
               onComplete={() => {}}
@@ -131,23 +187,20 @@ export default function Home() {
             transition={{ duration: 0.4, ease: "easeInOut" }}
             className="relative z-10 flex w-full max-w-[640px] flex-col items-center"
           >
-            {/* Logo mark */}
-            <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent shadow-md">
-              <BookOpenText size={28} className="text-white" />
-            </div>
-
-            {/* Branding */}
-            <h1 className="mb-1.5 font-arabic text-4xl font-bold text-text-primary">
-              المنظومة
-            </h1>
+            <Image
+              src="/logo_ar.svg"
+              alt="المنظومة"
+              width={220}
+              height={114}
+              className="mb-3 drop-shadow-sm"
+              priority
+            />
             <p className="mb-10 font-arabic text-base text-text-muted">
               محرك بحث أكاديمي ذكي للمقالات العربية
             </p>
 
-            {/* Hero search bar */}
             <SearchBar variant="hero" onSearch={handleSearch} />
 
-            {/* Stats hint */}
             <div className="mt-10 flex items-center gap-6">
               <div className="flex items-center gap-2 text-xs text-text-muted">
                 <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
@@ -189,6 +242,21 @@ export default function Home() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Circular reveal overlay */}
+      <canvas
+        ref={revealCanvasRef}
+        className="fixed inset-0 pointer-events-none"
+        style={{ zIndex: 5, display: "none" }}
+        aria-hidden="true"
+      />
+
+      {/* Result preview cards connected to globe nodes */}
+      <SearchPreview
+        results={previewResults}
+        networkRef={networkRef}
+        active={phase === "searching"}
+      />
     </div>
   );
 }
