@@ -332,29 +332,41 @@ function PageView({
     return regions;
   }, [page.words, scaleX, scaleY, citationMatchIds, globalWordOffset, searchTokens, highlight, activeMatchId, matchIdOffset]);
 
-  // After mount, measure each word span and apply scaleX for exact fit
+  // Sort lines by vertical position for correct DOM/selection order
+  const sortedLines = useMemo(() => {
+    if (!page.lines?.length) return [];
+    return [...page.lines]
+      .map((line) => {
+        if (!line.polygon || line.polygon.length < 8) return null;
+        const rect = polygonToRect(line.polygon, scaleX, scaleY);
+        if (rect.width < 1 || rect.height < 1) return null;
+        return { content: line.content, rect };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a!.rect.top - b!.rect.top) as { content: string; rect: { left: number; top: number; width: number; height: number } }[];
+  }, [page.lines, scaleX, scaleY]);
+
+  // After mount, measure each line span and apply scaleX for exact fit
   useEffect(() => {
     const layer = textLayerRef.current;
     if (!layer) return;
-    const spans = layer.querySelectorAll<HTMLSpanElement>(".doc-word");
+    const spans = layer.querySelectorAll<HTMLSpanElement>(".doc-line");
     spans.forEach((el) => {
       const targetW = parseFloat(el.dataset.tw || "0");
       if (targetW <= 0) return;
-      // Reset transform so scrollWidth is natural
       el.style.transform = "none";
       el.style.width = "auto";
       const natural = el.scrollWidth;
       if (natural > 0 && targetW > 0) {
         const scale = targetW / natural;
-        // Cap scaleX to prevent severe distortion
-        const capped = Math.max(0.7, Math.min(1.3, scale));
+        const capped = Math.max(0.5, Math.min(1.5, scale));
         if (Math.abs(capped - 1) > 0.01) {
           el.style.transform = `scaleX(${capped.toFixed(4)})`;
         }
       }
       el.style.width = `${targetW}px`;
     });
-  }, [page]);
+  }, [page, sortedLines]);
 
   return (
     <div style={{ margin: "20px auto" }}>
@@ -387,9 +399,8 @@ function PageView({
           draggable={false}
         />
 
-      {/* Text overlay – word-level positioned spans */}
+      {/* Highlight overlay – word-level regions (no pointer events) */}
       <div
-        ref={textLayerRef}
         style={{
           position: "absolute",
           inset: 0,
@@ -397,7 +408,6 @@ function PageView({
           pointerEvents: "none",
         }}
       >
-        {/* Unified highlight regions */}
         {highlightRegions.map((r, idx) => {
           const styles: React.CSSProperties =
             r.type === "citation"
@@ -433,32 +443,60 @@ function PageView({
             />
           );
         })}
+        {/* Invisible word markers for scroll-to-match targeting */}
         {page.words.map((word, i) => {
           if (word.polygon.length < 8) return null;
-          const rect = polygonToRect(word.polygon, scaleX, scaleY);
-          if (rect.width < 1 || rect.height < 1) return null;
-
-          const dir = firstStrongDir(word.content);
-          const fontSize = rect.height * 0.75;
           const isMatch = wordMatchesQuery(word.content, searchTokens);
-          const matchId = isMatch ? matchIdOffset + i : undefined;
-
+          if (!isMatch) return null;
+          const rect = polygonToRect(word.polygon, scaleX, scaleY);
+          const matchId = matchIdOffset + i;
           return (
             <span
-              key={i}
-              className="doc-word"
-              dir={dir}
-              data-tw={rect.width.toFixed(1)}
+              key={`wm-${i}`}
               data-match-id={matchId}
               data-global-id={globalWordOffset + i}
               style={{
                 position: "absolute",
                 left: rect.left,
                 top: rect.top,
-                width: rect.width,
-                height: rect.height,
+                width: 1,
+                height: 1,
+                overflow: "hidden",
+                pointerEvents: "none",
+              }}
+            />
+          );
+        })}
+      </div>
+
+      {/* Text selection layer – line-based spans for clean multi-line select & copy */}
+      <div
+        ref={textLayerRef}
+        dir="rtl"
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 3,
+          pointerEvents: "none",
+        }}
+      >
+        {sortedLines.map((line, idx) => {
+          const dir = firstStrongDir(line.content);
+          const fontSize = line.rect.height * 0.75;
+          return (
+            <span
+              key={`ln-${idx}`}
+              className="doc-line"
+              dir={dir}
+              data-tw={line.rect.width.toFixed(1)}
+              style={{
+                position: "absolute",
+                left: line.rect.left,
+                top: line.rect.top,
+                width: line.rect.width,
+                height: line.rect.height,
                 fontSize,
-                lineHeight: `${rect.height}px`,
+                lineHeight: `${line.rect.height}px`,
                 fontFamily:
                   "'Traditional Arabic', 'Noto Naskh Arabic', 'Amiri', serif",
                 color: "transparent",
@@ -468,11 +506,11 @@ function PageView({
                 transformOrigin: dir === "rtl" ? "right top" : "left top",
               }}
             >
-              {word.content}
+              {line.content}
             </span>
           );
         })}
-        </div>
+      </div>
       </div>
       {/* Page number */}
       <div
@@ -500,9 +538,10 @@ interface DocumentViewerProps {
   citationKey?: number;
   onCitationNotFound?: () => void;
   onAskAboutSelection?: (text: string) => void;
+  analyzing?: boolean;
 }
 
-export default function DocumentViewer({ docId, query = "", chatOpen = false, citationText = null, citationKey = 0, onCitationNotFound, onAskAboutSelection }: DocumentViewerProps) {
+export default function DocumentViewer({ docId, query = "", chatOpen = false, citationText = null, citationKey = 0, onCitationNotFound, onAskAboutSelection, analyzing = false }: DocumentViewerProps) {
   const router = useRouter();
   const [ocrData, setOcrData] = useState<OcrData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -839,7 +878,7 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
       {/* Pages container */}
       <div
         ref={containerRef}
-        className="flex-1"
+        className="flex-1 relative"
         style={{
           background: "#e8e8e8",
           padding: "24px 0",
@@ -847,6 +886,56 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
           overflowX: "auto",
         }}
       >
+        {/* Analyzing pulse overlay */}
+        {analyzing && (
+          <div className="absolute inset-0 z-30 pointer-events-none overflow-hidden">
+            {/* Soft edge vignette */}
+            <div
+              className="absolute inset-0"
+              style={{
+                background: "radial-gradient(ellipse at center, transparent 40%, rgba(155,27,48,0.05) 100%)",
+                animation: "analyze-vignette 3s ease-in-out infinite",
+              }}
+            />
+            {/* Circular pulse rings — 3 staggered, expanding from center */}
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="absolute rounded-full"
+                style={{
+                  top: "50%",
+                  left: "50%",
+                  width: 0,
+                  height: 0,
+                  transform: "translate(-50%, -50%)",
+                  border: "1.5px solid rgba(155,27,48,0.25)",
+                  boxShadow: "0 0 20px 4px rgba(155,27,48,0.06), inset 0 0 20px 4px rgba(155,27,48,0.03)",
+                  animation: `analyze-pulse 3.5s cubic-bezier(0.2, 0.6, 0.35, 1) ${i * 1.15}s infinite`,
+                }}
+              />
+            ))}
+            {/* Center dot — breathing origin */}
+            <div
+              className="absolute rounded-full"
+              style={{
+                top: "50%",
+                left: "50%",
+                width: 8,
+                height: 8,
+                transform: "translate(-50%, -50%)",
+                background: "rgba(155,27,48,0.35)",
+                boxShadow: "0 0 16px 6px rgba(155,27,48,0.15)",
+                animation: "analyze-dot 2s ease-in-out infinite",
+              }}
+            />
+            {/* Corner accents */}
+            <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-accent/20 rounded-tl-lg" style={{ animation: "analyze-corner 2s ease-in-out infinite" }} />
+            <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-accent/20 rounded-tr-lg" style={{ animation: "analyze-corner 2s ease-in-out infinite 0.5s" }} />
+            <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-accent/20 rounded-bl-lg" style={{ animation: "analyze-corner 2s ease-in-out infinite 1s" }} />
+            <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-accent/20 rounded-br-lg" style={{ animation: "analyze-corner 2s ease-in-out infinite 1.5s" }} />
+          </div>
+        )}
+
         {ocrData.pages.map((page, i) => (
           <PageView
             key={page.pageNumber}

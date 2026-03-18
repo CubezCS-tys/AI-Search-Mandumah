@@ -25,6 +25,11 @@ import {
   Library,
   FileSearch,
   BookMarked,
+  Target,
+  Layers,
+  ShieldCheck,
+  AlertTriangle,
+  Compass,
   type LucideIcon,
 } from "lucide-react";
 
@@ -37,19 +42,61 @@ interface Message {
 
 interface ChatPanelProps {
   docId: string;
-  /** If true, renders as embedded panel (no fixed positioning) */
   embedded?: boolean;
-  /** Called when user clicks X to close */
   onClose?: () => void;
-  /** Callback when user clicks a «citation» in assistant text */
   onCitationClick?: (text: string) => void;
-  /** Pre-filled text from document selection */
   selectedText?: string | null;
-  /** Callback to clear the selected text after it's consumed */
   onSelectedTextConsumed?: () => void;
+  onAnalyzingChange?: (analyzing: boolean) => void;
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/* ── Analysis types ────────────────────────────────────────── */
+
+interface Insight {
+  icon: string;
+  label: string;
+  text: string;
+  quote: string;
+}
+
+interface AnalysisResult {
+  title?: string;
+  authors?: string;
+  summary?: string;
+  methodology?: string;
+  insights: Insight[];
+}
+
+const INSIGHT_ICONS: Record<string, LucideIcon> = {
+  "target": Target,
+  "bar-chart": BarChart3,
+  "layers": Layers,
+  "shield-check": ShieldCheck,
+  "alert-triangle": AlertTriangle,
+  "compass": Compass,
+};
+
+function getInsightKey(docId: string) {
+  return `doc_analysis_${docId}`;
+}
+
+function loadCachedAnalysis(docId: string): AnalysisResult | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(getInsightKey(docId));
+    if (stored) return JSON.parse(stored);
+  } catch { /* corrupted */ }
+  return null;
+}
+
+function saveCachedAnalysis(docId: string, data: AnalysisResult) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(getInsightKey(docId), JSON.stringify(data));
+  } catch { /* full */ }
+}
 
 const SUGGESTED_QUESTIONS: { text: string; icon: LucideIcon }[] = [
   { text: "ما هي الفكرة الرئيسية لهذا البحث؟", icon: BookOpen },
@@ -120,12 +167,16 @@ export default function ChatPanel({
   onCitationClick,
   selectedText,
   onSelectedTextConsumed,
+  onAnalyzingChange,
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>(() => loadChatHistory(docId));
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(() => loadCachedAnalysis(docId));
+  const [analyzing, setAnalyzing] = useState(false);
+  const analyzingTriggered = useRef(false);
   const [compareDocIds, setCompareDocIds] = useState<string[]>([]);
   const [compareInput, setCompareInput] = useState("");
   const [showCompare, setShowCompare] = useState(false);
@@ -179,6 +230,34 @@ export default function ChatPanel({
     const t = setTimeout(() => inputRef.current?.focus(), 500);
     return () => clearTimeout(t);
   }, []);
+
+  // Auto-analyze document on first open (when no chat history and no cached analysis)
+  useEffect(() => {
+    if (analyzingTriggered.current) return;
+    if (messages.length > 0) return; // has chat history, skip
+    if (analysis) return; // already have cached analysis
+    analyzingTriggered.current = true;
+
+    setAnalyzing(true);
+    onAnalyzingChange?.(true);
+
+    fetch(`${API_BASE}/api/analyze/${docId}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data: AnalysisResult) => {
+        setAnalysis(data);
+        saveCachedAnalysis(docId, data);
+      })
+      .catch(() => {
+        // Silently fail — user can still use chat normally
+      })
+      .finally(() => {
+        setAnalyzing(false);
+        onAnalyzingChange?.(false);
+      });
+  }, [docId, messages.length, analysis, onAnalyzingChange]);
 
   const sendMessage = useCallback(
     async (text: string, overrideHistory?: Message[]) => {
@@ -603,61 +682,195 @@ export default function ChatPanel({
         className="flex-1 overflow-y-auto px-4 py-4 space-y-4 overscroll-contain"
       >
         {messages.length === 0 && (
-          <div className="flex flex-col items-center pt-8 pb-4 animate-in fade-in duration-500">
-            {/* Welcome icon */}
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-accent/[0.07] mb-4">
-              <MessageSquare size={28} className="text-accent" />
-            </div>
-            <h3 className="text-base font-semibold text-text-primary font-arabic mb-1">
-              اسأل أي سؤال عن هذا المستند
-            </h3>
-            <p className="text-xs text-text-muted font-arabic mb-6 max-w-[260px] text-center">
-              المساعد يحلل المستند الكامل ويجيب بناءً على محتواه فقط
-            </p>
-            {/* Suggested questions */}
-            <div className="w-full grid grid-cols-2 gap-2 mb-4">
-              {SUGGESTED_QUESTIONS.map((q) => (
-                <button
-                  key={q.text}
-                  onClick={() => sendMessage(q.text)}
-                  className="group flex items-start gap-2 rounded-xl border border-border/60 px-3 py-2.5 text-right text-[13px] text-text-secondary hover:border-accent/30 hover:bg-accent/[0.03] transition-all duration-200 font-arabic"
-                  dir="rtl"
-                >
-                  <span className="mt-0.5 text-accent/70 group-hover:scale-110 transition-transform">
-                    <q.icon size={16} />
-                  </span>
-                  <span className="leading-snug">{q.text}</span>
-                </button>
-              ))}
-            </div>
-            {/* Extraction templates */}
-            <div className="w-full">
-              <button
-                onClick={() => setShowTemplates((v) => !v)}
-                className="flex items-center gap-1.5 text-xs text-text-muted hover:text-accent transition-colors mb-2 font-arabic"
-              >
-                <FileText size={12} />
-                <span>قوالب استخراج جاهزة</span>
-                <span className="text-[10px]">{showTemplates ? "▲" : "▼"}</span>
-              </button>
-              {showTemplates && (
-                <div className="grid grid-cols-2 gap-2 animate-in slide-in-from-top-2 duration-200">
-                  {EXTRACTION_TEMPLATES.map((t) => (
+          <div className="flex flex-col pt-4 pb-4 animate-in fade-in duration-500">
+            {/* Analyzing state */}
+            {analyzing && !analysis && (
+              <div className="flex flex-col items-center pt-8 pb-6">
+                {/* Animated analysis orb */}
+                <div className="relative flex h-20 w-20 items-center justify-center mb-5">
+                  {/* Outer breathing ring */}
+                  <div
+                    className="absolute inset-0 rounded-full border border-accent/20"
+                    style={{ animation: "analysis-ring 3s ease-in-out infinite" }}
+                  />
+                  {/* Inner glowing container */}
+                  <div
+                    className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-accent/10 to-accent/[0.04]"
+                    style={{ animation: "analysis-glow 2.5s ease-in-out infinite" }}
+                  >
+                    <Sparkles size={24} className="text-accent" style={{ animation: "analyze-vignette 2s ease-in-out infinite" }} />
+                  </div>
+                  {/* Orbiting dot 1 */}
+                  <div
+                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+                    style={{ animation: "analysis-orbit 3s linear infinite" }}
+                  >
+                    <div className="h-1.5 w-1.5 rounded-full bg-accent/60" />
+                  </div>
+                  {/* Orbiting dot 2 — opposite phase */}
+                  <div
+                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+                    style={{ animation: "analysis-orbit 3s linear infinite reverse" }}
+                  >
+                    <div className="h-1 w-1 rounded-full bg-accent/40" />
+                  </div>
+                </div>
+                <h3 className="text-base font-semibold text-text-primary font-arabic mb-1">
+                  جاري تحليل المستند...
+                </h3>
+                <p className="text-xs text-text-muted font-arabic max-w-[260px] text-center">
+                  يتم فحص المحتوى واستخراج الأفكار الرئيسية
+                </p>
+                {/* Progress wave bars */}
+                <div className="flex gap-1 mt-4">
+                  {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+                    <div
+                      key={i}
+                      className="w-1 rounded-full bg-accent/70"
+                      style={{
+                        height: 12,
+                        animation: `analysis-wave 1.2s ease-in-out ${i * 0.1}s infinite`,
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Analysis results — insight cards */}
+            {analysis && (
+              <div className="space-y-3 animate-in fade-in slide-in-from-bottom-3 duration-500">
+                {/* Document header */}
+                <div className="rounded-xl bg-gradient-to-l from-accent/[0.06] to-transparent border border-border/40 p-3">
+                  <h3 className="text-sm font-bold text-text-primary font-arabic leading-snug mb-1 line-clamp-2" dir="auto">
+                    {analysis.title || "بدون عنوان"}
+                  </h3>
+                  {analysis.authors && (
+                    <p className="text-[11px] text-text-muted font-arabic mb-2" dir="auto">{analysis.authors}</p>
+                  )}
+                  {analysis.summary && (
+                    <p className="text-xs text-text-secondary font-arabic leading-relaxed" dir="auto">{analysis.summary}</p>
+                  )}
+                  {analysis.methodology && (
+                    <div className="mt-2 flex items-start gap-1.5">
+                      <FlaskConical size={12} className="text-accent/60 mt-0.5 shrink-0" />
+                      <p className="text-[11px] text-text-muted font-arabic" dir="auto">{analysis.methodology}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Insight cards */}
+                <div className="space-y-2">
+                  {analysis.insights?.map((insight, idx) => {
+                    const IconComp = INSIGHT_ICONS[insight.icon] || Sparkles;
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => {
+                          // Click to ask about this insight's quote
+                          if (insight.quote) {
+                            onCitationClick?.(insight.quote);
+                          }
+                          sendMessage(`أخبرني بالتفصيل عن: ${insight.label}`);
+                        }}
+                        className="group w-full rounded-xl border border-border/50 p-3 text-right hover:border-accent/30 hover:bg-accent/[0.02] transition-all duration-200 font-arabic"
+                        dir="rtl"
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <div className="shrink-0 mt-0.5 flex h-7 w-7 items-center justify-center rounded-lg bg-accent/[0.08] group-hover:bg-accent/15 transition-colors">
+                            <IconComp size={14} className="text-accent" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[13px] font-semibold text-text-primary leading-snug">{insight.label}</p>
+                            <p className="text-xs text-text-secondary leading-relaxed mt-0.5">{insight.text}</p>
+                            {insight.quote && (
+                              <p className="text-[11px] text-accent/70 mt-1.5 leading-relaxed line-clamp-2 bg-accent/[0.04] rounded-lg px-2 py-1">
+                                «{insight.quote}»
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Quick actions below insights */}
+                <div className="pt-2 border-t border-border/30">
+                  <p className="text-[11px] text-text-muted font-arabic mb-2">أو اسأل سؤالاً مباشراً:</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {SUGGESTED_QUESTIONS.map((q) => (
+                      <button
+                        key={q.text}
+                        onClick={() => sendMessage(q.text)}
+                        className="group flex items-center gap-1.5 rounded-lg border border-border/40 px-2.5 py-2 text-right text-[12px] text-text-secondary hover:border-accent/30 hover:bg-accent/[0.03] transition-all duration-200 font-arabic"
+                        dir="rtl"
+                      >
+                        <q.icon size={13} className="text-accent/60 shrink-0" />
+                        <span className="leading-snug truncate">{q.text}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Extraction templates */}
+                <div>
+                  <button
+                    onClick={() => setShowTemplates((v) => !v)}
+                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-accent transition-colors mb-2 font-arabic"
+                  >
+                    <FileText size={12} />
+                    <span>قوالب استخراج جاهزة</span>
+                    <span className="text-[10px]">{showTemplates ? "▲" : "▼"}</span>
+                  </button>
+                  {showTemplates && (
+                    <div className="grid grid-cols-2 gap-1.5 animate-in slide-in-from-top-2 duration-200">
+                      {EXTRACTION_TEMPLATES.map((t) => (
+                        <button
+                          key={t.label}
+                          onClick={() => sendMessage(t.text)}
+                          className="group flex items-center gap-1.5 rounded-lg border border-accent/20 bg-accent/[0.02] px-2.5 py-2 text-right text-[12px] text-text-secondary hover:border-accent/40 hover:bg-accent/[0.06] transition-all duration-200 font-arabic"
+                          dir="rtl"
+                        >
+                          <t.icon size={13} className="text-accent/60 shrink-0" />
+                          <span className="leading-snug truncate">{t.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Fallback: no analysis yet and not analyzing (shouldn't happen, but just in case) */}
+            {!analysis && !analyzing && (
+              <div className="flex flex-col items-center pt-8 pb-4">
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-accent/[0.07] mb-4">
+                  <MessageSquare size={28} className="text-accent" />
+                </div>
+                <h3 className="text-base font-semibold text-text-primary font-arabic mb-1">
+                  اسأل أي سؤال عن هذا المستند
+                </h3>
+                <p className="text-xs text-text-muted font-arabic mb-6 max-w-[260px] text-center">
+                  المساعد يحلل المستند الكامل ويجيب بناءً على محتواه فقط
+                </p>
+                <div className="w-full grid grid-cols-2 gap-2 mb-4">
+                  {SUGGESTED_QUESTIONS.map((q) => (
                     <button
-                      key={t.label}
-                      onClick={() => sendMessage(t.text)}
-                      className="group flex items-start gap-2 rounded-xl border border-accent/20 bg-accent/[0.02] px-3 py-2.5 text-right text-[13px] text-text-secondary hover:border-accent/40 hover:bg-accent/[0.06] transition-all duration-200 font-arabic"
+                      key={q.text}
+                      onClick={() => sendMessage(q.text)}
+                      className="group flex items-start gap-2 rounded-xl border border-border/60 px-3 py-2.5 text-right text-[13px] text-text-secondary hover:border-accent/30 hover:bg-accent/[0.03] transition-all duration-200 font-arabic"
                       dir="rtl"
                     >
                       <span className="mt-0.5 text-accent/70 group-hover:scale-110 transition-transform">
-                        <t.icon size={16} />
+                        <q.icon size={16} />
                       </span>
-                      <span className="leading-snug">{t.label}</span>
+                      <span className="leading-snug">{q.text}</span>
                     </button>
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
 

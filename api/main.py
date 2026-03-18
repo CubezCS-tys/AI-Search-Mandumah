@@ -92,6 +92,7 @@ class SearchRequest(BaseModel):
     journal_id: str | None = None
     section: str | None = None
     doc_id: str | None = None
+    deduplicate: bool = True  # keep only the top chunk per document
 
 
 class SearchResultItem(BaseModel):
@@ -143,16 +144,26 @@ async def search(req: SearchRequest):
 
     searcher = get_searcher()
 
+    # Fetch more candidates when deduplicating so we can still return top_k unique docs
+    fetch_k = min(req.top_k * 5, 100) if req.deduplicate else req.top_k
+
     t0 = time.time()
     results = searcher.search(
         req.query,
-        top_k=req.top_k,
+        top_k=fetch_k,
         mode=req.mode,
         journal_id=req.journal_id,
         section=req.section,
         doc_id=req.doc_id,
     )
     search_ms = round((time.time() - t0) * 1000, 1)
+
+    if req.deduplicate:
+        seen: dict[str, object] = {}
+        for r in results:
+            if r.doc_id not in seen:
+                seen[r.doc_id] = r
+        results = list(seen.values())[:req.top_k]
 
     return SearchResponse(
         query=req.query,
@@ -410,3 +421,56 @@ async def chat(req: ChatRequest):
         stream_chat(content, req.message, history),
         media_type="text/event-stream",
     )
+
+
+# ── Document analysis (deep insights) ────────────────────────────────────
+
+# LRU cache for analysis results (avoids re-analyzing the same doc)
+_ANALYSIS_CACHE_MAX = 30
+_analysis_cache: OrderedDict[str, str] = OrderedDict()
+
+
+@app.get("/api/analyze/{doc_id}")
+async def analyze(doc_id: str):
+    """Return a structured deep analysis of a document."""
+    if not _DOC_ID_RE.match(doc_id):
+        raise HTTPException(400, "Invalid document ID format")
+
+    # Check cache first
+    if doc_id in _analysis_cache:
+        _analysis_cache.move_to_end(doc_id)
+        return JSONResponse(
+            content=json.loads(_analysis_cache[doc_id]),
+            headers={"X-Cache": "HIT"},
+        )
+
+    json_path = _doc_dir(doc_id) / f"{doc_id}.json"
+    if not json_path.is_file():
+        raise HTTPException(404, "Document not found")
+
+    content = await asyncio.to_thread(_load_doc_content_cached, json_path)
+    if not content or not content.strip():
+        raise HTTPException(422, "Document has no extractable text content")
+
+    from services.chat import analyze_document
+
+    try:
+        raw = await asyncio.to_thread(analyze_document, content)
+        # Strip markdown fences if model wraps them
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1]
+        if cleaned.endswith("```"):
+            cleaned = cleaned.rsplit("```", 1)[0]
+        cleaned = cleaned.strip()
+        parsed = json.loads(cleaned)
+    except (json.JSONDecodeError, Exception) as exc:
+        logger.exception("Analysis parse error: %s", exc)
+        raise HTTPException(500, "حدث خطأ أثناء تحليل المستند")
+
+    # Cache the result
+    _analysis_cache[doc_id] = json.dumps(parsed, ensure_ascii=False)
+    if len(_analysis_cache) > _ANALYSIS_CACHE_MAX:
+        _analysis_cache.popitem(last=False)
+
+    return JSONResponse(content=parsed)

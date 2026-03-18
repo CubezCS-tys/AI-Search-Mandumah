@@ -5,6 +5,7 @@ export interface SearchRequest {
   journal_id?: string;
   section?: string;
   doc_id?: string;
+  deduplicate?: boolean;
 }
 
 export interface SearchResultItem {

@@ -67,6 +67,41 @@ MAX_HISTORY = 40  # conversation turns to keep
 # Budget: ~100K tokens for content, leaving ~28K for system prompt, history, and response.
 MAX_CONTENT_CHARS = 400_000  # ~100 K tokens
 
+# ── Analysis prompt ──────────────────────────────────────────────────────
+
+ANALYSIS_PROMPT = """\
+You are an expert document analyzer. Given a scholarly document, produce a deep structured analysis in JSON format.
+
+Respond with ONLY a valid JSON object (no markdown fences, no explanation). The JSON has this exact structure:
+
+{{
+  "title": "عنوان البحث",
+  "authors": "المؤلفون",
+  "summary": "ملخص شامل في 2-3 جمل",
+  "methodology": "المنهجية المستخدمة في جملة واحدة",
+  "insights": [
+    {{
+      "icon": "target",
+      "label": "عنوان قصير",
+      "text": "شرح مختصر في جملة واحدة",
+      "quote": "اقتباس حرفي من المستند يدعم هذه النقطة"
+    }}
+  ]
+}}
+
+Rules:
+- The "insights" array must have exactly 6 items covering: الهدف الرئيسي, أهم النتائج, الإطار النظري, نقاط القوة, القيود/المحددات, التوصيات
+- Use these icon values in order: "target", "bar-chart", "layers", "shield-check", "alert-triangle", "compass"
+- "quote" must be the EXACT text from the document (verbatim, no paraphrasing)
+- "label" should be 2-4 words
+- "text" should be 1 sentence max
+- All text in Arabic
+- Do NOT wrap in markdown code fences
+
+Document:
+{content}
+"""
+
 
 # ── Lazy OpenAI client ────────────────────────────────────────────────────
 
@@ -210,3 +245,30 @@ def stream_chat_multi(
     except Exception:
         logger.exception("Multi-doc chat stream error")
         yield f"data: {json.dumps({'error': 'حدث خطأ أثناء معالجة طلبك. يرجى المحاولة مرة أخرى.'})}\n\n"
+
+
+def analyze_document(document_text: str) -> str:
+    """Return a structured JSON analysis of the document (non-streaming).
+
+    Returns the raw JSON string from the model.
+    """
+    if len(document_text) > MAX_CONTENT_CHARS:
+        document_text = (
+            document_text[:MAX_CONTENT_CHARS]
+            + "\n\n[... تم اختصار المستند ...]"
+        )
+
+    client = _get_client()
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": ANALYSIS_PROMPT.format(content=document_text),
+            },
+        ],
+        temperature=0.2,
+        max_tokens=4096,
+    )
+    return response.choices[0].message.content or "{}"

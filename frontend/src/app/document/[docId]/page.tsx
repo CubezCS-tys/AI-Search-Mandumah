@@ -15,6 +15,7 @@ function DocumentContent({ docId }: { docId: string }) {
   const [citationKey, setCitationKey] = useState(0);
   const [citationNotFound, setCitationNotFound] = useState(false);
   const [selectedText, setSelectedText] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
   const rippleTimeout = useRef<ReturnType<typeof setTimeout>>(null);
 
   const openChat = useCallback((e: React.MouseEvent) => {
@@ -112,16 +113,19 @@ function DocumentContent({ docId }: { docId: string }) {
         className="transition-all duration-500 ease-out"
         style={{ marginRight: chatOpen ? "45%" : "0" }}
       >
-        <DocumentViewer docId={docId} query={query} chatOpen={chatOpen} citationText={citationText} citationKey={citationKey} onCitationNotFound={handleCitationNotFound} onAskAboutSelection={handleAskAboutSelection} />
+        <DocumentViewer docId={docId} query={query} chatOpen={chatOpen} citationText={citationText} citationKey={citationKey} onCitationNotFound={handleCitationNotFound} onAskAboutSelection={handleAskAboutSelection} analyzing={analyzing} />
       </div>
 
-      {/* Chat panel — fixed to right side of viewport */}
+      {/* Chat panel — fixed to right side of viewport with slide-in */}
       {chatOpen && (
         <div
-          className="fixed top-13 right-0 bottom-0 z-50 border-l border-border bg-white transition-all duration-500 ease-out"
-          style={{ width: "45%" }}
+          className="fixed top-13 right-0 bottom-0 z-50 border-l border-border/60 bg-white shadow-[-8px_0_30px_rgba(0,0,0,0.08)]"
+          style={{
+            width: "45%",
+            animation: "chat-slide-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both",
+          }}
         >
-          <ChatPanel docId={docId} onClose={closeChat} onCitationClick={handleCitationClick} selectedText={selectedText} onSelectedTextConsumed={() => setSelectedText(null)} embedded />
+          <ChatPanel docId={docId} onClose={closeChat} onCitationClick={handleCitationClick} selectedText={selectedText} onSelectedTextConsumed={() => setSelectedText(null)} onAnalyzingChange={setAnalyzing} embedded />
         </div>
       )}
 
@@ -189,6 +193,10 @@ function DocumentContent({ docId }: { docId: string }) {
         @keyframes chat-btn-pulse {
           0% { transform: scale(1); opacity: 0.5; }
           100% { transform: scale(2.2); opacity: 0; }
+        }
+        @keyframes chat-slide-in {
+          0% { transform: translateX(100%); opacity: 0.5; }
+          100% { transform: translateX(0); opacity: 1; }
         }
       `}</style>
     </div>
