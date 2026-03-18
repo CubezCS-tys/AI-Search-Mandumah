@@ -54,12 +54,7 @@ _EXTRA_ORIGINS = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        *_EXTRA_ORIGINS,
-    ],
-    allow_origin_regex=r"https://.*\.ngrok(-free)?\.app|https://.*\.ngrok\.io",
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
