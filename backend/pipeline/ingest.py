@@ -33,7 +33,7 @@ import threading
 import time
 from pathlib import Path
 
-from pipeline.chunker import Chunk, chunk_document
+from backend.pipeline.chunker import Chunk, chunk_document
 
 logger = logging.getLogger(__name__)
 
@@ -359,7 +359,7 @@ def ingest_documents(
         resume: If True, skip already-processed documents.
         limit: Max number of documents to process (0 = all).
     """
-    from pipeline.embedder import BGEm3Embedder
+    from backend.pipeline.embedder import BGEm3Embedder
 
     input_path = Path(input_dir)
     checkpoint_path = input_path / CHECKPOINT_FILE

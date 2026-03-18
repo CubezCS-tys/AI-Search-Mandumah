@@ -13,9 +13,6 @@ import {
   Maximize,
   Download,
   ArrowRight,
-  Highlighter,
-  ChevronUp,
-  ChevronDown,
   ChevronsUp,
   ChevronsDown,
   MessageSquareText,
@@ -73,6 +70,16 @@ function stripTashkeel(s: string) {
   return s.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, "");
 }
 
+/** Strip punctuation that OCR often attaches to words. */
+function stripPunctuation(s: string) {
+  return s.replace(/[.,،؛:؟!()\[\]{}«»"'\-–—٪%\/\\]/g, "");
+}
+
+/** Full normalization: tashkeel + punctuation + lowercase + trim. */
+function normalizeWord(s: string) {
+  return stripPunctuation(stripTashkeel(s)).toLowerCase().trim();
+}
+
 /* ── Citation matching strategies ───────────────────────────── */
 
 type FlatWord = { norm: string; globalIdx: number };
@@ -83,7 +90,7 @@ function findExactConsecutive(allWords: FlatWord[], citTokens: string[]): Set<nu
   for (let i = 0; i <= allWords.length - citTokens.length; i++) {
     let ok = true;
     for (let j = 0; j < citTokens.length; j++) {
-      if (!allWords[i + j].norm.includes(citTokens[j])) {
+      if (allWords[i + j].norm !== citTokens[j]) {
         ok = false;
         break;
       }
@@ -96,16 +103,16 @@ function findExactConsecutive(allWords: FlatWord[], citTokens: string[]): Set<nu
   return matched;
 }
 
-/** Strategy 2: Tolerant window — allow up to 20% mismatched tokens */
+/** Strategy 2: Tolerant window — allow up to 10% mismatched tokens */
 function findTolerantWindow(allWords: FlatWord[], citTokens: string[]): Set<number> {
-  const maxMiss = Math.max(1, Math.floor(citTokens.length * 0.2));
+  const maxMiss = Math.max(1, Math.floor(citTokens.length * 0.1));
   let bestStart = -1;
   let bestMisses = citTokens.length + 1;
 
   for (let i = 0; i <= allWords.length - citTokens.length; i++) {
     let misses = 0;
     for (let j = 0; j < citTokens.length; j++) {
-      if (!allWords[i + j].norm.includes(citTokens[j])) {
+      if (allWords[i + j].norm !== citTokens[j]) {
         misses++;
         if (misses > maxMiss) break;
       }
@@ -126,6 +133,9 @@ function findTolerantWindow(allWords: FlatWord[], citTokens: string[]): Set<numb
 
 /** Strategy 3: Substring match — join OCR words, find the citation as a substring */
 function findSubstringMatch(allWords: FlatWord[], citNorm: string): Set<number> {
+  // Require minimum citation length to avoid false positives
+  if (citNorm.length < 8) return new Set<number>();
+
   // Build a running concatenation, track which characters belong to which word
   const charToWord: number[] = [];
   let text = "";
@@ -150,21 +160,21 @@ function findSubstringMatch(allWords: FlatWord[], citNorm: string): Set<number> 
 
 /** Strategy 4: Key-phrase cluster — find densest region containing distinctive words */
 function findKeyPhraseCluster(allWords: FlatWord[], citTokens: string[]): Set<number> {
-  // Use only distinctive tokens (length >= 3 chars)
-  const keys = citTokens.filter((t) => t.length >= 3);
-  if (keys.length < 2) return new Set<number>();
+  // Use only distinctive tokens (length >= 4 chars)
+  const keys = citTokens.filter((t) => t.length >= 4);
+  if (keys.length < 3) return new Set<number>();
 
   // Find all positions where key tokens appear
   const positions: number[] = [];
   for (let i = 0; i < allWords.length; i++) {
-    if (keys.some((k) => allWords[i].norm.includes(k))) {
+    if (keys.some((k) => allWords[i].norm === k)) {
       positions.push(i);
     }
   }
-  if (positions.length < 2) return new Set<number>();
+  if (positions.length < 3) return new Set<number>();
 
-  // Find the densest window of `keys.length` matches within a window of citTokens.length * 2
-  const windowSize = citTokens.length * 2;
+  // Find the densest window of `keys.length` matches within a window of citTokens.length * 1.5
+  const windowSize = Math.ceil(citTokens.length * 1.5);
   let bestScore = 0;
   let bestStart = -1;
   let bestEnd = -1;
@@ -180,19 +190,12 @@ function findKeyPhraseCluster(allWords: FlatWord[], citTokens: string[]): Set<nu
     }
   }
 
-  // Need at least 40% of key tokens matched in window
-  if (bestScore < Math.ceil(keys.length * 0.4)) return new Set<number>();
+  // Need at least 60% of key tokens matched in window
+  if (bestScore < Math.ceil(keys.length * 0.6)) return new Set<number>();
 
   const matched = new Set<number>();
   for (let i = bestStart; i <= bestEnd; i++) matched.add(allWords[i].globalIdx);
   return matched;
-}
-
-/** Check if a word matches any of the search tokens. */
-function wordMatchesQuery(word: string, tokens: string[]) {
-  if (!tokens.length) return false;
-  const normalized = stripTashkeel(word).toLowerCase();
-  return tokens.some((t) => normalized.includes(t));
 }
 
 /** First strong bidi direction. */
@@ -224,20 +227,12 @@ function firstStrongDir(text: string): "rtl" | "ltr" {
 function PageView({
   page,
   docId,
-  searchTokens,
-  highlight,
-  activeMatchId,
-  matchIdOffset,
   citationMatchIds,
   globalWordOffset,
   pageIndex,
 }: {
   page: OcrPage;
   docId: string;
-  searchTokens: string[];
-  highlight: boolean;
-  activeMatchId: number;
-  matchIdOffset: number;
   citationMatchIds: Set<number>;
   globalWordOffset: number;
   pageIndex: number;
@@ -249,13 +244,13 @@ function PageView({
   const pageHeightPx = page.rasterHeight || Math.round(page.height * 200);
   const textLayerRef = useRef<HTMLDivElement>(null);
 
-  // Compute unified highlight regions by grouping consecutive same-type highlighted words on the same line
+  // Compute citation highlight regions by grouping consecutive citation-highlighted words on the same line
   const highlightRegions = useMemo(() => {
     const PAD = 3; // px padding around groups
     const LINE_THRESH = 0.5; // words within 50% height difference = same line
-    const regions: { left: number; top: number; width: number; height: number; type: "citation" | "active" | "match" }[] = [];
+    const regions: { left: number; top: number; width: number; height: number }[] = [];
 
-    type WordInfo = { rect: { left: number; top: number; width: number; height: number }; type: "citation" | "active" | "match" };
+    type WordInfo = { rect: { left: number; top: number; width: number; height: number } } | null;
     const tagged: WordInfo[] = [];
 
     for (let i = 0; i < page.words.length; i++) {
@@ -265,35 +260,27 @@ function PageView({
       if (rect.width < 1 || rect.height < 1) continue;
 
       const isCitation = citationMatchIds.has(globalWordOffset + i);
-      const isMatch = wordMatchesQuery(word.content, searchTokens);
-      const matchId = isMatch ? matchIdOffset + i : undefined;
-      const isActive = matchId !== undefined && matchId === activeMatchId;
 
       if (isCitation) {
-        tagged.push({ rect, type: "citation" });
-      } else if (highlight && isMatch) {
-        tagged.push({ rect, type: isActive ? "active" : "match" });
+        tagged.push({ rect });
       } else {
-        tagged.push(null as unknown as WordInfo); // placeholder
+        tagged.push(null);
       }
     }
 
     let groupStart = -1;
-    let groupType: "citation" | "active" | "match" | null = null;
     let groupTop = 0, groupBottom = 0, groupLeft = 0, groupRight = 0;
 
     const flushGroup = () => {
-      if (groupStart >= 0 && groupType) {
+      if (groupStart >= 0) {
         regions.push({
           left: groupLeft - PAD,
           top: groupTop - PAD,
           width: groupRight - groupLeft + PAD * 2,
           height: groupBottom - groupTop + PAD * 2,
-          type: groupType,
         });
       }
       groupStart = -1;
-      groupType = null;
     };
 
     for (let i = 0; i < tagged.length; i++) {
@@ -302,10 +289,10 @@ function PageView({
         flushGroup();
         continue;
       }
-      const { rect, type } = item;
+      const { rect } = item;
       const midY = rect.top + rect.height / 2;
 
-      if (groupStart >= 0 && groupType === type) {
+      if (groupStart >= 0) {
         // Check if same line (vertical overlap)
         const groupMidY = (groupTop + groupBottom) / 2;
         const groupH = groupBottom - groupTop;
@@ -321,7 +308,6 @@ function PageView({
       // New group
       flushGroup();
       groupStart = i;
-      groupType = type;
       groupLeft = rect.left;
       groupRight = rect.left + rect.width;
       groupTop = rect.top;
@@ -330,7 +316,7 @@ function PageView({
     flushGroup();
 
     return regions;
-  }, [page.words, scaleX, scaleY, citationMatchIds, globalWordOffset, searchTokens, highlight, activeMatchId, matchIdOffset]);
+  }, [page.words, scaleX, scaleY, citationMatchIds, globalWordOffset]);
 
   // Sort lines by vertical position for correct DOM/selection order
   const sortedLines = useMemo(() => {
@@ -387,6 +373,8 @@ function PageView({
           src={`/api/document/${docId}/page/${page.pageNumber}/image`}
           alt={`Page ${page.pageNumber}`}
           loading={pageIndex < 2 ? "eager" : "lazy"}
+          width={pageWidthPx}
+          height={pageHeightPx}
           style={{
             position: "absolute",
             inset: 0,
@@ -409,23 +397,6 @@ function PageView({
         }}
       >
         {highlightRegions.map((r, idx) => {
-          const styles: React.CSSProperties =
-            r.type === "citation"
-              ? {
-                  background: "linear-gradient(180deg, rgba(155,27,48,0.12) 0%, rgba(155,27,48,0.25) 100%)",
-                  border: "1.5px solid rgba(155,27,48,0.4)",
-                  boxShadow: "0 1px 8px rgba(155,27,48,0.18)",
-                }
-              : r.type === "active"
-                ? {
-                    background: "linear-gradient(180deg, rgba(255,140,0,0.15) 0%, rgba(255,140,0,0.28) 100%)",
-                    border: "1.5px solid rgba(255,140,0,0.4)",
-                    boxShadow: "0 1px 6px rgba(255,140,0,0.2)",
-                  }
-                : {
-                    background: "linear-gradient(180deg, rgba(255,200,0,0.1) 0%, rgba(255,200,0,0.22) 100%)",
-                    border: "1.5px solid rgba(255,180,0,0.35)",
-                  };
           return (
             <div
               key={`hl-${idx}`}
@@ -438,22 +409,22 @@ function PageView({
                 borderRadius: 4,
                 pointerEvents: "none",
                 transition: "opacity 0.3s",
-                ...styles,
+                background: "linear-gradient(180deg, rgba(155,27,48,0.12) 0%, rgba(155,27,48,0.25) 100%)",
+                border: "1.5px solid rgba(155,27,48,0.4)",
+                boxShadow: "0 1px 8px rgba(155,27,48,0.18)",
               }}
             />
           );
         })}
-        {/* Invisible word markers for scroll-to-match targeting */}
+        {/* Invisible word markers for citation targeting */}
         {page.words.map((word, i) => {
           if (word.polygon.length < 8) return null;
-          const isMatch = wordMatchesQuery(word.content, searchTokens);
-          if (!isMatch) return null;
+          const isCitation = citationMatchIds.has(globalWordOffset + i);
+          if (!isCitation) return null;
           const rect = polygonToRect(word.polygon, scaleX, scaleY);
-          const matchId = matchIdOffset + i;
           return (
             <span
               key={`wm-${i}`}
-              data-match-id={matchId}
               data-global-id={globalWordOffset + i}
               style={{
                 position: "absolute",
@@ -546,10 +517,17 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
   const [ocrData, setOcrData] = useState<OcrData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(0.6);
-  const [highlight, setHighlight] = useState(true);
-  const [currentMatchIdx, setCurrentMatchIdx] = useState(-1);
+  const [zoom, setZoom] = useState(() => {
+    if (typeof window === "undefined") return 0.6;
+    const saved = localStorage.getItem("doc_viewer_zoom");
+    return saved ? parseFloat(saved) : 0.6;
+  });
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Persist zoom to localStorage
+  useEffect(() => {
+    localStorage.setItem("doc_viewer_zoom", String(zoom));
+  }, [zoom]);
 
   // Text selection for "ask about this" feature
   const [selectionPopup, setSelectionPopup] = useState<{ text: string; x: number; y: number } | null>(null);
@@ -574,48 +552,29 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
       }
       const range = selection.getRangeAt(0);
       const rect = range.getBoundingClientRect();
-      setSelectionPopup({ text, x: rect.left + rect.width / 2, y: rect.top - 10 });
+      // Clamp popup position to viewport bounds
+      const popupWidth = 120;
+      const popupHeight = 36;
+      const x = Math.max(popupWidth / 2, Math.min(window.innerWidth - popupWidth / 2, rect.left + rect.width / 2));
+      const y = Math.max(popupHeight + 4, rect.top - 10);
+      setSelectionPopup({ text, x, y });
     };
 
     document.addEventListener("selectionchange", handleSelectionChange);
     return () => document.removeEventListener("selectionchange", handleSelectionChange);
   }, []);
 
-  // Prepare search tokens
-  const searchTokens = useMemo(() => {
-    if (!query.trim()) return [];
-    return query
-      .split(/\s+/)
-      .filter((t) => t.length > 1)
-      .map((t) => stripTashkeel(t).toLowerCase());
-  }, [query]);
-
-  // Build flat list of match IDs: each is pageWordOffset + wordIndex within each page
-  const { matchIds, matchOffsets } = useMemo(() => {
-    if (!ocrData?.pages?.length || !searchTokens.length)
-      return { matchIds: [] as number[], matchOffsets: [] as number[] };
-
-    const ids: number[] = [];
+  // Build per-page word offsets for citation global indexing
+  const pageWordOffsets = useMemo(() => {
+    if (!ocrData?.pages?.length) return [] as number[];
     const offsets: number[] = [];
     let offset = 0;
-
     for (const page of ocrData.pages) {
       offsets.push(offset);
-      page.words.forEach((word, i) => {
-        if (wordMatchesQuery(word.content, searchTokens)) {
-          ids.push(offset + i);
-        }
-      });
       offset += page.words.length;
     }
-
-    return { matchIds: ids, matchOffsets: offsets };
-  }, [ocrData, searchTokens]);
-
-  // Reset match index when matches change
-  useEffect(() => {
-    setCurrentMatchIdx(-1);
-  }, [matchIds]);
+    return offsets;
+  }, [ocrData]);
 
   // ── Citation highlighting ────────────────────────────────────
   // Multi-strategy matching: exact consecutive → tolerant (allow skips) → substring
@@ -625,8 +584,8 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
     const citNorm = stripTashkeel(citationText).toLowerCase().trim();
     if (!citNorm) return new Set<number>();
 
-    // Tokenize citation into words
-    const citTokens = citNorm.split(/\s+/).filter(Boolean);
+    // Tokenize citation into words (strip punctuation per token for matching)
+    const citTokens = citNorm.split(/\s+/).filter(Boolean).map((t) => stripPunctuation(t)).filter(Boolean);
     if (!citTokens.length) return new Set<number>();
 
     // Build a flat array of all normalized words with their global indices
@@ -635,7 +594,7 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
     for (const page of ocrData.pages) {
       for (let i = 0; i < page.words.length; i++) {
         allWords.push({
-          norm: stripTashkeel(page.words[i].content).toLowerCase(),
+          norm: normalizeWord(page.words[i].content),
           globalIdx: globalIdx + i,
         });
       }
@@ -646,12 +605,15 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
     const exactMatch = findExactConsecutive(allWords, citTokens);
     if (exactMatch.size > 0) return exactMatch;
 
-    // Strategy 2: Tolerant window — allow up to 20% token mismatches
-    const tolerantMatch = findTolerantWindow(allWords, citTokens);
-    if (tolerantMatch.size > 0) return tolerantMatch;
+    // Strategy 2: Tolerant window — allow up to 10% token mismatches (skip if too few tokens)
+    if (citTokens.length >= 3) {
+      const tolerantMatch = findTolerantWindow(allWords, citTokens);
+      if (tolerantMatch.size > 0) return tolerantMatch;
+    }
 
     // Strategy 3: Sliding substring — join OCR words into text, find best overlap
-    const substringMatch = findSubstringMatch(allWords, citNorm);
+    const citNormNoPunct = stripPunctuation(citNorm);
+    const substringMatch = findSubstringMatch(allWords, citNormNoPunct);
     if (substringMatch.size > 0) return substringMatch;
 
     // Strategy 4: Key-phrase fallback — take distinctive words (length >= 3),
@@ -724,27 +686,6 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
     setZoom(Math.min(0.6, containerWidth / pageWidthPx));
   }, [ocrData]);
 
-  const scrollToMatch = useCallback((matchId: number) => {
-    const container = containerRef.current;
-    if (!container) return;
-    const el = container.querySelector(`[data-match-id="${matchId}"]`);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, []);
-
-  const goNextMatch = useCallback(() => {
-    if (!matchIds.length) return;
-    const next = currentMatchIdx < matchIds.length - 1 ? currentMatchIdx + 1 : 0;
-    setCurrentMatchIdx(next);
-    scrollToMatch(matchIds[next]);
-  }, [matchIds, currentMatchIdx, scrollToMatch]);
-
-  const goPrevMatch = useCallback(() => {
-    if (!matchIds.length) return;
-    const prev = currentMatchIdx > 0 ? currentMatchIdx - 1 : matchIds.length - 1;
-    setCurrentMatchIdx(prev);
-    scrollToMatch(matchIds[prev]);
-  }, [matchIds, currentMatchIdx, scrollToMatch]);
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -778,8 +719,6 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
     "px-2 py-1 rounded text-xs border cursor-pointer transition-colors";
   const btnNormal =
     `${btnBase} bg-white text-text-secondary border-border-subtle hover:bg-gray-50`;
-  const btnActive =
-    `${btnBase} bg-accent text-white border-accent`;
 
   return (
     <div className="flex flex-col" style={{ minHeight: "100vh" }}>
@@ -825,35 +764,6 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
           <button onClick={fitPage} className={btnNormal} title="Fit to page">
             <Maximize size={13} />
           </button>
-
-          {/* Separator */}
-          <div className="h-4 w-px bg-border-subtle" />
-
-          {/* Highlight toggle + match navigation */}
-          {query && (
-            <>
-              <button
-                onClick={() => setHighlight((v) => !v)}
-                className={highlight ? btnActive : btnNormal}
-                title={highlight ? "إخفاء التظليل" : "إظهار التظليل"}
-              >
-                <Highlighter size={13} />
-              </button>
-              {highlight && matchIds.length > 0 && (
-                <>
-                  <button onClick={goPrevMatch} className={btnNormal} title="النتيجة السابقة">
-                    <ChevronUp size={13} />
-                  </button>
-                  <span className="text-[11px] text-text-muted tabular-nums min-w-[36px] text-center">
-                    {currentMatchIdx >= 0 ? currentMatchIdx + 1 : 0}/{matchIds.length}
-                  </span>
-                  <button onClick={goNextMatch} className={btnNormal} title="النتيجة التالية">
-                    <ChevronDown size={13} />
-                  </button>
-                </>
-              )}
-            </>
-          )}
 
           {/* Separator */}
           <div className="h-4 w-px bg-border-subtle" />
@@ -941,12 +851,8 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
             key={page.pageNumber}
             page={page}
             docId={docId}
-            searchTokens={searchTokens}
-            highlight={highlight}
-            activeMatchId={currentMatchIdx >= 0 ? matchIds[currentMatchIdx] : -1}
-            matchIdOffset={matchOffsets[i] ?? 0}
             citationMatchIds={citationMatchIds}
-            globalWordOffset={matchOffsets[i] ?? 0}
+            globalWordOffset={pageWordOffsets[i] ?? 0}
             pageIndex={i}
           />
         ))}

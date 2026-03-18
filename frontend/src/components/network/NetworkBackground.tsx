@@ -114,6 +114,60 @@ function projectNode(
 
 /* ── Component ──────────────────────────────────────────────── */
 
+/** Build a random walk through the node graph, ~pathLen nodes. */
+function buildJourneyPath(
+  nodes: Node3D[],
+  edges: Edge[],
+  pathLen: number,
+): number[] {
+  // Build adjacency list
+  const adj: number[][] = Array.from({ length: nodes.length }, () => []);
+  for (const e of edges) {
+    adj[e.a].push(e.b);
+    adj[e.b].push(e.a);
+  }
+  // Start from a random well-connected node near the front
+  const candidates = nodes
+    .map((n, i) => ({ i, conns: adj[i].length, phi: n.phi }))
+    .filter((c) => c.conns >= 3 && c.phi > 0.5 && c.phi < 2.5)
+    .sort((a, b) => b.conns - a.conns);
+  const start = candidates.length > 0
+    ? candidates[Math.floor(Math.random() * Math.min(10, candidates.length))].i
+    : Math.floor(Math.random() * nodes.length);
+
+  const visited = new Set<number>();
+  const path: number[] = [start];
+  visited.add(start);
+
+  let current = start;
+  for (let step = 1; step < pathLen; step++) {
+    const neighbors = adj[current].filter((n) => !visited.has(n));
+    if (neighbors.length === 0) {
+      // Jump to a random unvisited connected node from any visited node
+      let jumped = false;
+      for (const v of visited) {
+        const opts = adj[v].filter((n) => !visited.has(n));
+        if (opts.length > 0) {
+          current = opts[Math.floor(Math.random() * opts.length)];
+          path.push(current);
+          visited.add(current);
+          jumped = true;
+          break;
+        }
+      }
+      if (!jumped) break;
+    } else {
+      // Prefer neighbors in a different cluster for visual variety
+      const diffCluster = neighbors.filter((n) => nodes[n].cluster !== nodes[current].cluster);
+      const pool = diffCluster.length > 0 && Math.random() > 0.4 ? diffCluster : neighbors;
+      current = pool[Math.floor(Math.random() * pool.length)];
+      path.push(current);
+      visited.add(current);
+    }
+  }
+  return path;
+}
+
 const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nodesRef = useRef<Node3D[]>([]);
@@ -135,6 +189,25 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
   const logoImgRef = useRef<HTMLImageElement | null>(null);
   const idlePulseRef = useRef(false);
   const idlePulseStartRef = useRef(0);
+
+  /* Journey state — traveler moving through the network */
+  const journeyRef = useRef({
+    active: false,
+    startTime: 0,
+    /** Ordered list of node indices the traveler visits */
+    path: [] as number[],
+    /** Current segment index (which edge of the path we're on) */
+    segment: 0,
+    /** Progress within current segment [0,1] */
+    segProgress: 0,
+    /** Camera target rotation (we slowly steer toward traveler) */
+    camTargetY: 0,
+    camTargetX: 0,
+    /** Trail: recently visited node indices with timestamps */
+    trail: [] as { idx: number; time: number }[],
+    /** Burst rings from visited nodes */
+    bursts: [] as { idx: number; time: number }[],
+  });
 
   /* ── Init ──────────────────────────────────────────────────── */
 
@@ -176,17 +249,42 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
   useImperativeHandle(ref, () => ({
     getResultPositions: () => resultScreenPosRef.current,
     startIdlePulse: () => {
-      // Zoom in and start gentle random pulsing on nodes (no real scores)
+      // Start the journey: build a path and begin traveling
       idlePulseRef.current = true;
       idlePulseStartRef.current = elapsedRef.current;
-      zoomRef.current.target = 1.45;
+
+      const j = journeyRef.current;
+      j.active = true;
+      j.startTime = elapsedRef.current;
+      j.path = buildJourneyPath(nodesRef.current, edgesRef.current, 40);
+      j.segment = 0;
+      j.segProgress = 0;
+      j.trail = [];
+      j.bursts = [];
+      // Start zoomed in
+      zoomRef.current.target = 2.2;
+
+      // Snap camera to the first node so there's no violent initial spin
+      if (j.path.length > 0) {
+        const n = nodesRef.current[j.path[0]];
+        const targetY = Math.PI / 2 - n.theta;
+        const targetX = Math.PI / 2 - n.phi;
+        j.camTargetY = targetY;
+        j.camTargetX = targetX;
+        // Also snap rotation immediately so we don't spin wildly to reach it
+        rotRef.current.y = targetY;
+        rotRef.current.x = targetX;
+      }
     },
     triggerSearch: (scores?: number[]) => new Promise<void>((resolve) => {
-      // Stop idle pulse, start real search
+      // Stop idle pulse & journey, start real search
       idlePulseRef.current = false;
+      journeyRef.current.active = false;
       searchActiveRef.current = true;
       searchStartRef.current = elapsedRef.current;
       resolveRef.current = resolve;
+      // Zoom back out for the real search view
+      zoomRef.current.target = 1.45;
 
       const nodes = nodesRef.current;
       const edges = edgesRef.current;
@@ -295,8 +393,40 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
         resolveRef.current = null;
       }
     } else if (idlePulseRef.current) {
-      // Zoomed in with gentle idle searching
+      // Journey mode: zoom toward traveler, smoothly steer camera
+      const j = journeyRef.current;
       zoom.current += (zoom.target - zoom.current) * (1 - Math.exp(-zoomSpeed * dt));
+
+      if (j.active && j.path.length > 1) {
+        // Advance traveler: ~0.9s per segment
+        const SEG_DURATION = 0.9;
+        j.segProgress += dt / SEG_DURATION;
+
+        while (j.segProgress >= 1 && j.segment < j.path.length - 2) {
+          j.segProgress -= 1;
+          j.segment++;
+          // Record trail
+          const visitedIdx = j.path[j.segment];
+          j.trail.push({ idx: visitedIdx, time: t });
+          // Record burst
+          j.bursts.push({ idx: visitedIdx, time: t });
+          // Keep trail limited
+          if (j.trail.length > 12) j.trail.shift();
+          if (j.bursts.length > 20) j.bursts.shift();
+        }
+
+        // Clamp at end of path, then loop
+        if (j.segment >= j.path.length - 2 && j.segProgress >= 1) {
+          j.path = buildJourneyPath(nodesRef.current, edgesRef.current, 40);
+          j.segment = 0;
+          j.segProgress = 0;
+        }
+
+        // Steer camera toward current node
+        const curNode = nodesRef.current[j.path[j.segment]];
+        j.camTargetY = Math.PI / 2 - curNode.theta;
+        j.camTargetX = Math.PI / 2 - curNode.phi;
+      }
     } else {
       zoom.target = 1;
       zoom.current += (1 - zoom.current) * (1 - Math.exp(-zoomSpeed * 0.8 * dt));
@@ -304,8 +434,21 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
 
     // Rotation (dt-based)
     const rot = rotRef.current;
-    const rotSpeed = searchActiveRef.current ? 0.18 : idlePulseRef.current ? 0.14 : 0.09;
-    rot.y += rotSpeed * dt;
+    if (idlePulseRef.current && journeyRef.current.active) {
+      // Smoothly steer camera to follow the traveling pulse
+      const j = journeyRef.current;
+      const steerSpeed = 1 - Math.exp(-3.0 * dt);
+      // Wrap angle difference to [-PI, PI] to avoid 360° spins
+      let dy = j.camTargetY - rot.y;
+      dy = dy - Math.round(dy / (Math.PI * 2)) * Math.PI * 2;
+      let dx = j.camTargetX - rot.x;
+      dx = dx - Math.round(dx / (Math.PI * 2)) * Math.PI * 2;
+      rot.y += dy * steerSpeed;
+      rot.x += dx * steerSpeed;
+    } else {
+      const rotSpeed = searchActiveRef.current ? 0.18 : idlePulseRef.current ? 0.14 : 0.09;
+      rot.y += rotSpeed * dt;
+    }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -342,7 +485,8 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
       resultScreenPosRef.current = [];
     }
 
-    for (const node of nodes) {
+    for (let ni = 0; ni < nodes.length; ni++) {
+      const node = nodes[ni];
       // Brightness (dt-based smooth decay)
       if (searchActiveRef.current && searchT >= 0) {
         const at = searchT - node.pulseDelay;
@@ -352,19 +496,28 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
           node.brightness = Math.max(0, wave) + glow;
         }
       } else if (idlePulseRef.current) {
-        // Gentle random pulsing while waiting for API
-        const idleT = t - idlePulseStartRef.current;
-        // Repeating wave: each ~1.5s a new pulse originates from center
-        const wavePeriod = 1.5;
-        const waveAge = idleT % wavePeriod;
-        // Node lights up when wave front passes its angular position
-        const wavePhase = waveAge / wavePeriod; // 0→1
-        const nodeAngle = (node.theta + node.phi) / (Math.PI * 2); // 0→~1
-        const dist = Math.abs(wavePhase - (nodeAngle % 1));
-        const hit = dist < 0.12 || dist > 0.88; // near the wave front
-        const pulse = hit ? 0.35 * Math.exp(-Math.min(dist, 1 - dist) * 12) : 0;
-        const ambient = 0.06 + 0.04 * Math.sin(idleT * 2 + node.theta * 3);
-        node.brightness = Math.max(0, ambient + pulse);
+        // Journey mode: nodes in the trail glow, traveler's current pair bright
+        const j = journeyRef.current;
+        let br = 0;
+        if (j.active) {
+          // Check if this node is in the trail
+          for (const tr of j.trail) {
+            if (tr.idx === ni) {
+              const age = t - tr.time;
+              br = Math.max(br, 0.5 * Math.exp(-age * 0.6));
+            }
+          }
+          // Current segment endpoints glow bright
+          if (j.path.length > 1 && j.segment < j.path.length - 1) {
+            const iA = j.path[j.segment];
+            const iB = j.path[j.segment + 1];
+            if (ni === iA) br = Math.max(br, 0.7);
+            if (ni === iB) br = Math.max(br, 0.4 + j.segProgress * 0.4);
+          }
+        }
+        // Gentle ambient
+        const ambient = 0.04 + 0.02 * Math.sin(t * 1.5 + node.theta * 3);
+        node.brightness = Math.max(ambient, br);
       } else {
         node.brightness *= Math.exp(-6 * dt); // smooth exponential decay
       }
@@ -505,24 +658,195 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
       ctx.fill();
     }
 
-    // ── Idle pulse wave rings ─────────────────────────────────
+    // ── Journey traveler visualization ──────────────────────────
 
     if (idlePulseRef.current && !searchActiveRef.current) {
-      const idleT = t - idlePulseStartRef.current;
-      const wavePeriod = 1.5;
-      // Draw up to 2 concurrent rings
-      for (let w = 0; w < 2; w++) {
-        const waveAge = (idleT + w * wavePeriod * 0.5) % wavePeriod;
-        const rp = waveAge / wavePeriod;
-        const rr = rp * Rdpr * 1.05;
-        const ra = (1 - rp) * 0.18;
-        if (ra > 0.005 && rr > 5) {
+      const j = journeyRef.current;
+
+      // Trail edges — glowing path showing where we've been
+      for (let i = 1; i < j.trail.length; i++) {
+        const pA = nodes[j.trail[i - 1].idx];
+        const pB = nodes[j.trail[i].idx];
+        const age = t - j.trail[i].time;
+        const alpha = Math.max(0, 0.25 - age * 0.02);
+        if (alpha > 0.005) {
           ctx.beginPath();
-          ctx.arc(cx, cy, rr, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${ra})`;
+          ctx.moveTo(pA.px, pA.py);
+          ctx.lineTo(pB.px, pB.py);
+          ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${alpha})`;
           ctx.lineWidth = 1.5 * dpr;
-          ctx.setLineDash([]);
           ctx.stroke();
+        }
+      }
+
+      // Trail node markers — small glowing dots at visited nodes
+      for (const tr of j.trail) {
+        const trN = nodes[tr.idx];
+        const age = t - tr.time;
+        const a = Math.max(0, 0.35 - age * 0.04);
+        if (a > 0.01) {
+          ctx.beginPath();
+          ctx.arc(trN.px, trN.py, 2.5 * dpr, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${a})`;
+          ctx.fill();
+        }
+      }
+
+      if (j.active && j.path.length > 1 && j.segment < j.path.length - 1) {
+        const nA = nodes[j.path[j.segment]];
+        const nB = nodes[j.path[j.segment + 1]];
+
+        // Traveler position — interpolate with easing
+        const tp = j.segProgress;
+        const ease = tp < 0.5 ? 2 * tp * tp : 1 - Math.pow(-2 * tp + 2, 2) / 2;
+        const tx = nA.px + (nB.px - nA.px) * ease;
+        const ty = nA.py + (nB.py - nA.py) * ease;
+
+        // ── Energy flow dashes along the current edge ──
+        const edgeLen = Math.hypot(nB.px - nA.px, nB.py - nA.py);
+        const dashCount = Math.max(3, Math.floor(edgeLen / (12 * dpr)));
+        for (let d = 0; d < dashCount; d++) {
+          // Each dash moves from A to B, staggered, cycling
+          const dashT = ((t * 1.8 + d / dashCount) % 1);
+          // Only draw dashes ahead of the traveler
+          if (dashT > ease) {
+            const dx = nA.px + (nB.px - nA.px) * dashT;
+            const dy = nA.py + (nB.py - nA.py) * dashT;
+            const distFromTrav = Math.abs(dashT - ease);
+            const da = 0.3 * (1 - distFromTrav);
+            if (da > 0.01) {
+              ctx.beginPath();
+              ctx.arc(dx, dy, 1.2 * dpr, 0, Math.PI * 2);
+              ctx.fillStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${da})`;
+              ctx.fill();
+            }
+          }
+        }
+
+        // ── Glow trail line (from A to traveler) ──
+        const trailGrad = ctx.createLinearGradient(nA.px, nA.py, tx, ty);
+        trailGrad.addColorStop(0, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.08)`);
+        trailGrad.addColorStop(1, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.4)`);
+        ctx.beginPath();
+        ctx.moveTo(nA.px, nA.py);
+        ctx.lineTo(tx, ty);
+        ctx.strokeStyle = trailGrad;
+        ctx.lineWidth = 2.5 * dpr;
+        ctx.stroke();
+
+        // Dimmer line ahead (traveler to B)
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(nB.px, nB.py);
+        ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.08)`;
+        ctx.lineWidth = 1 * dpr;
+        ctx.stroke();
+
+        // ── Outer breathing aura ──
+        const breathe = 0.85 + 0.15 * Math.sin(t * 4);
+        const auraR = 28 * dpr * breathe;
+        const auraGrad = ctx.createRadialGradient(tx, ty, 0, tx, ty, auraR);
+        auraGrad.addColorStop(0, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.25)`);
+        auraGrad.addColorStop(0.35, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.10)`);
+        auraGrad.addColorStop(0.7, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.03)`);
+        auraGrad.addColorStop(1, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0)`);
+        ctx.beginPath();
+        ctx.arc(tx, ty, auraR, 0, Math.PI * 2);
+        ctx.fillStyle = auraGrad;
+        ctx.fill();
+
+        // ── Spinning arc ring around traveler ──
+        const ringR = 12 * dpr;
+        ctx.save();
+        ctx.translate(tx, ty);
+        ctx.rotate(t * 2.5);
+        ctx.beginPath();
+        ctx.arc(0, 0, ringR, 0, Math.PI * 0.7);
+        ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.35)`;
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(0, 0, ringR, Math.PI, Math.PI * 1.5);
+        ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.2)`;
+        ctx.lineWidth = 1 * dpr;
+        ctx.stroke();
+        ctx.restore();
+
+        // ── Core traveler dot ──
+        const coreGlow = ctx.createRadialGradient(tx, ty, 0, tx, ty, 6 * dpr);
+        coreGlow.addColorStop(0, `rgba(255,255,255,0.9)`);
+        coreGlow.addColorStop(0.4, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0.8)`);
+        coreGlow.addColorStop(1, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0)`);
+        ctx.beginPath();
+        ctx.arc(tx, ty, 6 * dpr, 0, Math.PI * 2);
+        ctx.fillStyle = coreGlow;
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(tx, ty, 2.5 * dpr, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,0.95)`;
+        ctx.fill();
+
+        // ── Spark particles trailing behind traveler ──
+        for (let sp = 0; sp < 5; sp++) {
+          const sparkAge = sp * 0.08;
+          const sparkT = Math.max(0, ease - sparkAge * 0.5);
+          const spx = nA.px + (nB.px - nA.px) * sparkT;
+          const spy = nA.py + (nB.py - nA.py) * sparkT;
+          // Offset each spark with a sin wave for spread
+          const offX = Math.sin(t * 6 + sp * 2.1) * 4 * dpr;
+          const offY = Math.cos(t * 5.5 + sp * 1.7) * 4 * dpr;
+          const spAlpha = 0.4 * (1 - sp / 5);
+          ctx.beginPath();
+          ctx.arc(spx + offX, spy + offY, (1.5 - sp * 0.15) * dpr, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${spAlpha})`;
+          ctx.fill();
+        }
+      }
+
+      // ── Discovery bursts at visited nodes — double ring ──
+      for (const burst of j.bursts) {
+        const age = t - burst.time;
+        if (age > 1.5) continue;
+        const bNode = nodes[burst.idx];
+        const progress = age / 1.5;
+
+        // Outer ring — expands fast
+        const r1 = (6 + progress * 35) * dpr;
+        const a1 = (1 - progress) * 0.3;
+        if (a1 > 0.005) {
+          ctx.beginPath();
+          ctx.arc(bNode.px, bNode.py, r1, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${a1})`;
+          ctx.lineWidth = (2 - progress * 1.5) * dpr;
+          ctx.stroke();
+        }
+
+        // Inner ring — delayed, smaller
+        const innerAge = Math.max(0, age - 0.15);
+        const ip = innerAge / 1.2;
+        if (ip < 1) {
+          const r2 = (3 + ip * 20) * dpr;
+          const a2 = (1 - ip) * 0.2;
+          ctx.beginPath();
+          ctx.arc(bNode.px, bNode.py, r2, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(255,255,255,${a2})`;
+          ctx.lineWidth = (1.5 - ip) * dpr;
+          ctx.stroke();
+        }
+
+        // Brief bright flash at center
+        if (age < 0.3) {
+          const flashA = (1 - age / 0.3) * 0.5;
+          const flashGrad = ctx.createRadialGradient(
+            bNode.px, bNode.py, 0, bNode.px, bNode.py, 8 * dpr
+          );
+          flashGrad.addColorStop(0, `rgba(255,255,255,${flashA})`);
+          flashGrad.addColorStop(1, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},0)`);
+          ctx.beginPath();
+          ctx.arc(bNode.px, bNode.py, 8 * dpr, 0, Math.PI * 2);
+          ctx.fillStyle = flashGrad;
+          ctx.fill();
         }
       }
     }

@@ -1,13 +1,22 @@
 """
 Al-Manthooma Search API.
 
-Thin FastAPI layer over the pipeline search module.
+Thin FastAPI layer over the backend services and pipeline.
 
 Run:
-    uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 """
 
 from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Ensure the project root is on sys.path so `backend.*` imports always resolve,
+# regardless of the working directory uvicorn is launched from.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import asyncio
 import hashlib
@@ -36,13 +45,21 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Al-Manthooma Search API", version="0.1.0")
 
-# CORS — allow Next.js dev server
+# CORS — allow Next.js dev server and any ngrok tunnel
+_EXTRA_ORIGINS = [
+    o.strip()
+    for o in os.getenv("EXTRA_CORS_ORIGINS", "").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        *_EXTRA_ORIGINS,
     ],
+    allow_origin_regex=r"https://.*\.ngrok(-free)?\.app|https://.*\.ngrok\.io",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -73,7 +90,7 @@ def get_searcher():
     if _searcher is None:
         with _searcher_lock:
             if _searcher is None:
-                from services.search import Searcher
+                from backend.services.search import Searcher
 
                 _searcher = Searcher(
                     qdrant_url=os.getenv("QDRANT_URL", "http://localhost:6333"),
@@ -93,6 +110,7 @@ class SearchRequest(BaseModel):
     section: str | None = None
     doc_id: str | None = None
     deduplicate: bool = True  # keep only the top chunk per document
+    hyde: bool = True  # use Hypothetical Document Embeddings for better recall
 
 
 class SearchResultItem(BaseModel):
@@ -133,6 +151,37 @@ async def health():
         return {"status": "error", "detail": str(e)}
 
 
+@app.get("/api/stats")
+async def stats():
+    """Return live collection stats: chunk count + unique doc count."""
+    try:
+        searcher = get_searcher()
+        info = searcher.client.get_collection(searcher.collection_name)
+        chunks = info.points_count or 0
+
+        # Count unique doc_ids via scroll
+        doc_ids: set[str] = set()
+        offset = None
+        while True:
+            points, offset = searcher.client.scroll(
+                collection_name=searcher.collection_name,
+                limit=250,
+                offset=offset,
+                with_payload=["doc_id"],
+                with_vectors=False,
+            )
+            for pt in points:
+                did = (pt.payload or {}).get("doc_id")
+                if did:
+                    doc_ids.add(did)
+            if offset is None:
+                break
+
+        return {"chunks": chunks, "documents": len(doc_ids)}
+    except Exception as e:
+        return {"chunks": 0, "documents": 0, "error": str(e)}
+
+
 @app.post("/api/search", response_model=SearchResponse)
 async def search(req: SearchRequest):
     """Run a hybrid/dense/sparse search."""
@@ -147,15 +196,29 @@ async def search(req: SearchRequest):
     # Fetch more candidates when deduplicating so we can still return top_k unique docs
     fetch_k = min(req.top_k * 5, 100) if req.deduplicate else req.top_k
 
+    # HyDE: use hypothetical document for embedding when no doc_id filter is active
+    use_hyde = req.hyde and not req.doc_id
+
     t0 = time.time()
-    results = searcher.search(
-        req.query,
-        top_k=fetch_k,
-        mode=req.mode,
-        journal_id=req.journal_id,
-        section=req.section,
-        doc_id=req.doc_id,
-    )
+    if use_hyde:
+        results = await asyncio.to_thread(
+            searcher.search_with_hyde,
+            req.query,
+            top_k=fetch_k,
+            mode=req.mode,
+            journal_id=req.journal_id,
+            section=req.section,
+        )
+    else:
+        results = await asyncio.to_thread(
+            searcher.search,
+            req.query,
+            top_k=fetch_k,
+            mode=req.mode,
+            journal_id=req.journal_id,
+            section=req.section,
+            doc_id=req.doc_id,
+        )
     search_ms = round((time.time() - t0) * 1000, 1)
 
     if req.deduplicate:
@@ -187,6 +250,39 @@ async def search(req: SearchRequest):
     )
 
 
+# ── Search synthesis ──────────────────────────────────────────────────────
+
+
+class SynthesisRequest(BaseModel):
+    query: str = Field(..., max_length=2000)
+    results: list[SearchResultItem] = Field(..., min_length=1, max_length=20)
+
+
+@app.post("/api/search/synthesize")
+async def synthesize(req: SynthesisRequest):
+    """Stream a cross-document synthesis grounded in the provided search results."""
+    if not req.query.strip():
+        raise HTTPException(400, "Query cannot be empty")
+
+    from backend.services.synthesis import stream_synthesis
+
+    chunks = [
+        {
+            "doc_id": r.doc_id,
+            "title": r.title,
+            "section": r.section,
+            "text": r.text,
+            "score": r.score,
+        }
+        for r in req.results
+    ]
+
+    return StreamingResponse(
+        stream_synthesis(req.query, chunks),
+        media_type="text/event-stream",
+    )
+
+
 # ── PDF serving ───────────────────────────────────────────────────────────
 
 _DOC_ID_RE = re.compile(r"^\d{4}-\d{3}-\d{3}-\d{3}$")
@@ -214,12 +310,19 @@ def _doc_dir(doc_id: str) -> Path:
     return _OUTPUT_DIR / f"output_{journal_id}" / doc_id
 
 
-def _load_ocr_data(json_path: Path, pdf_path: Path) -> list[dict]:
-    """Synchronous: load OCR JSON and compute raster dimensions."""
-    with open(json_path, encoding="utf-8") as f:
-        data = json.load(f)
+# LRU cache for raster dimensions (avoids re-opening the PDF for every OCR request)
+_RASTER_DIMS_CACHE_MAX = 100
+_raster_dims_cache: OrderedDict[str, dict[int, tuple[int, int]]] = OrderedDict()
 
-    raster_dims: dict[int, tuple[int, int]] = {}
+
+def _get_raster_dims(pdf_path: Path) -> dict[int, tuple[int, int]]:
+    """Return {pageNumber: (rasterWidth, rasterHeight)} for a PDF, using cache."""
+    key = str(pdf_path)
+    if key in _raster_dims_cache:
+        _raster_dims_cache.move_to_end(key)
+        return _raster_dims_cache[key]
+
+    dims: dict[int, tuple[int, int]] = {}
     if pdf_path.is_file():
         try:
             doc = fitz.open(str(pdf_path))
@@ -227,10 +330,23 @@ def _load_ocr_data(json_path: Path, pdf_path: Path) -> list[dict]:
                 page = doc[i]
                 rw = round(page.rect.width * 200 / 72)
                 rh = round(page.rect.height * 200 / 72)
-                raster_dims[i + 1] = (rw, rh)
+                dims[i + 1] = (rw, rh)
             doc.close()
         except Exception:
             pass
+
+    _raster_dims_cache[key] = dims
+    if len(_raster_dims_cache) > _RASTER_DIMS_CACHE_MAX:
+        _raster_dims_cache.popitem(last=False)
+    return dims
+
+
+def _load_ocr_data(json_path: Path, pdf_path: Path) -> list[dict]:
+    """Synchronous: load OCR JSON and compute raster dimensions."""
+    with open(json_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    raster_dims = _get_raster_dims(pdf_path)
 
     pages = []
     for p in data.get("pages", []):
@@ -398,6 +514,7 @@ async def chat(req: ChatRequest):
 
     # Load comparison documents if any
     compare_contents: list[tuple[str, str]] = []
+    missing_compare: list[str] = []
     for cid in req.compare_doc_ids:
         if cid == req.doc_id:
             continue  # skip duplicates
@@ -406,10 +523,17 @@ async def chat(req: ChatRequest):
             ccontent = await asyncio.to_thread(_load_doc_content_cached, cpath)
             if ccontent and ccontent.strip():
                 compare_contents.append((cid, ccontent))
+            else:
+                missing_compare.append(cid)
+        else:
+            missing_compare.append(cid)
+
+    if req.compare_doc_ids and not compare_contents and missing_compare:
+        raise HTTPException(404, f"Comparison document(s) not found: {', '.join(missing_compare)}")
 
     history = [{"role": m.role, "content": m.content} for m in req.history]
 
-    from services.chat import stream_chat, stream_chat_multi
+    from backend.services.chat import stream_chat, stream_chat_multi
 
     if compare_contents:
         return StreamingResponse(
@@ -452,7 +576,7 @@ async def analyze(doc_id: str):
     if not content or not content.strip():
         raise HTTPException(422, "Document has no extractable text content")
 
-    from services.chat import analyze_document
+    from backend.services.chat import analyze_document
 
     try:
         raw = await asyncio.to_thread(analyze_document, content)

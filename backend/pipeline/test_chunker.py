@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from pipeline.chunker import chunk_document
+from backend.pipeline.chunker import chunk_document
 
 
 def main():

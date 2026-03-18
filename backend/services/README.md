@@ -25,7 +25,7 @@ RRF is scale-invariant — it works even when dense cosine scores and sparse dot
 ### Class: `Searcher`
 
 ```python
-from services.search import Searcher
+from backend.services.search import Searcher
 
 searcher = Searcher(
     qdrant_url="http://localhost:6333",
@@ -105,7 +105,7 @@ Yields SSE-formatted strings. On any OpenAI API error, yields `data: {"error": "
 ### `stream_chat_multi`
 
 ```python
-from services.chat import stream_chat_multi
+from backend.services.chat import stream_chat_multi
 
 for event in stream_chat_multi(primary_text, compare_docs, message, history):
     print(event, end="")

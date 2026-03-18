@@ -194,7 +194,7 @@ Type=simple
 User=mandumah
 WorkingDirectory=/home/mandumah/app
 EnvironmentFile=/home/mandumah/app/.env
-ExecStart=/home/mandumah/app/.venv/bin/uvicorn api.main:app \
+ExecStart=/home/mandumah/app/.venv/bin/uvicorn backend.main:app \
     --host 127.0.0.1 \
     --port 8000 \
     --workers 2 \
@@ -323,7 +323,7 @@ sudo certbot renew --dry-run
 
 ## Step 10 — Update CORS for production
 
-Edit `api/main.py` to add your production frontend URL:
+Edit `backend/main.py` to add your production frontend URL:
 
 ```python
 app.add_middleware(
@@ -414,5 +414,5 @@ rsync -avz /home/mandumah/app/storage/ backups@backup-server:/backups/qdrant/
 - [ ] Deploy frontend to Vercel (or set up Node service)
 - [ ] Configure Nginx reverse proxy
 - [ ] Get SSL certificate with Certbot
-- [ ] Update CORS origins in `api/main.py`
+- [ ] Update CORS origins in `backend/main.py`
 - [ ] Test all endpoints end-to-end

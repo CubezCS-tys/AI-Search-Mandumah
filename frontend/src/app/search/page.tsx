@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, Suspense } from "react";
+import { useState, useCallback, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Header from "@/components/layout/Header";
 import SearchBar from "@/components/search/SearchBar";
@@ -8,6 +8,8 @@ import SearchFilters from "@/components/search/SearchFilters";
 import SearchResults from "@/components/search/SearchResults";
 import SearchMeta from "@/components/search/SearchMeta";
 import ResultSkeleton from "@/components/search/ResultSkeleton";
+import SynthesisPanel from "@/components/search/SynthesisPanel";
+import ReferenceCarousel from "@/components/search/ReferenceCarousel";
 import { useSearch } from "@/lib/hooks/useSearch";
 import type { SearchMode } from "@/types/search";
 
@@ -25,6 +27,15 @@ function SearchPageContent() {
     section: searchParams.get("section") || "",
     docId: searchParams.get("doc") || "",
   });
+
+  const [synthesisActive, setSynthesisActive] = useState(false);
+  const [carouselIndex, setCarouselIndex] = useState(0);
+
+  // Reset synthesis state when the search query changes
+  useEffect(() => {
+    setSynthesisActive(false);
+    setCarouselIndex(0);
+  }, [queryParam]);
 
   // Build search request
   const searchRequest = query
@@ -86,7 +97,7 @@ function SearchPageContent() {
       </div>
 
       {/* Results */}
-      <main className="mx-auto max-w-3xl px-5 py-5">
+      <main className={`mx-auto px-5 py-5 ${synthesisActive ? "max-w-[1280px]" : "max-w-3xl"}`}>
         {/* Filters + meta row */}
         <div className="mb-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -121,9 +132,42 @@ function SearchPageContent() {
         {/* Loading */}
         {isLoading && <ResultSkeleton count={5} />}
 
-        {/* Results */}
+        {/* Synthesis + results — two-column grid when synthesis is active */}
         {data && !isLoading && (
-          <SearchResults results={data.results} query={query} />
+          <div
+            className={`grid ${
+              synthesisActive
+                ? "gap-6 lg:grid-cols-[3fr_2fr] items-start"
+                : "grid-cols-1"
+            }`}
+          >
+            {/* Left column: synthesis panel + flat results (when not in synthesis mode) */}
+            <div>
+              {data.results.length > 0 && (
+                <SynthesisPanel
+                  key={query}
+                  query={query}
+                  results={data.results}
+                  onCitationClick={setCarouselIndex}
+                  onSynthesisStateChange={setSynthesisActive}
+                  activeCarouselIndex={carouselIndex}
+                />
+              )}
+              {!synthesisActive && (
+                <SearchResults results={data.results} query={query} />
+              )}
+            </div>
+
+            {/* Right column: 3D reference carousel (only when synthesis is active) */}
+            {synthesisActive && data.results.length > 0 && (
+              <ReferenceCarousel
+                results={data.results}
+                activeIndex={carouselIndex}
+                onSelect={setCarouselIndex}
+                query={query}
+              />
+            )}
+          </div>
         )}
 
         {/* No query state */}

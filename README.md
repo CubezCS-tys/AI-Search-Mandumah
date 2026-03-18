@@ -30,9 +30,10 @@ Arabic academic document search and chat platform, built on top of the [Mandumah
 
 ```
 .
-├── api/            FastAPI application → see api/README.md
-├── pipeline/       Chunker, embedder, ingestion CLI → see pipeline/README.md
-├── services/       Search and chat service layer → see services/README.md
+├── backend/        Python backend
+│   ├── main.py     FastAPI application
+│   ├── services/   Search, chat, HyDE, synthesis
+│   └── pipeline/   Chunker, embedder, ingestion CLI
 ├── frontend/       Next.js application → see frontend/README.md
 ├── output/         Azure DI JSON + PDF files (gitignored)
 ├── storage/        Qdrant on-disk storage (gitignored)
@@ -81,7 +82,7 @@ OUTPUT_DIR=./output
 ### 4. Ingest documents
 
 ```bash
-python -m pipeline.ingest --input-dir output/
+python -m backend.pipeline.ingest --input-dir output/
 ```
 
 See [pipeline/README.md](pipeline/README.md) for full options.
@@ -89,7 +90,7 @@ See [pipeline/README.md](pipeline/README.md) for full options.
 ### 5. Start the API server
 
 ```bash
-.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 > **Note:** always use `.venv/bin/uvicorn`, not the system `uvicorn`, so the correct packages are used.

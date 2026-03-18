@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
@@ -28,6 +28,15 @@ export default function Home() {
   const searchModeRef = useRef<SearchMode>("hybrid");
   const pendingScoresRef = useRef<number[]>([]);
   const [previewResults, setPreviewResults] = useState<SearchResultItem[]>([]);
+
+  // Live stats from Qdrant
+  const [stats, setStats] = useState<{ chunks: number; documents: number } | null>(null);
+  useEffect(() => {
+    fetch("/api/stats")
+      .then((r) => r.json())
+      .then((d) => { if (d.chunks) setStats({ chunks: d.chunks, documents: d.documents }); })
+      .catch(() => {});
+  }, []);
   const apiDoneRef = useRef(false);
   const animDoneRef = useRef(false);
   const searchingRef = useRef(false);
@@ -172,11 +181,11 @@ export default function Home() {
             <div className="mt-10 flex items-center gap-6">
               <div className="flex items-center gap-2 text-xs text-text-muted">
                 <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                <span className="font-arabic">407 مقطع مفهرس</span>
+                <span className="font-arabic">{stats ? `${stats.chunks.toLocaleString("en-US")} مقطع مفهرس` : "..."}</span>
               </div>
               <div className="h-3 w-px bg-border" />
               <div className="flex items-center gap-2 text-xs text-text-muted">
-                <span className="font-arabic">10 مستندات</span>
+                <span className="font-arabic">{stats ? `${stats.documents.toLocaleString("en-US")} مستندات` : "..."}</span>
               </div>
               <div className="h-3 w-px bg-border" />
               <div className="flex items-center gap-2 text-xs text-text-muted">

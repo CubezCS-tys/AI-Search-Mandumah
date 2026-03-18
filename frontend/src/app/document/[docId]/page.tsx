@@ -1,10 +1,44 @@
 "use client";
 
-import { use, Suspense, useState, useRef, useCallback } from "react";
+import { use, Suspense, useState, useRef, useCallback, useEffect, Component, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import Header from "@/components/layout/Header";
 import DocumentViewer from "@/components/document/DocumentViewer";
 import ChatPanel from "@/components/document/ChatPanel";
+
+/* ── Error boundary ──────────────────────────────────────── */
+
+class DocumentErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-svh flex items-center justify-center bg-white" dir="rtl">
+          <div className="text-center space-y-3 max-w-md px-6">
+            <p className="text-lg font-bold text-red-600 font-arabic">حدث خطأ غير متوقع</p>
+            <p className="text-sm text-text-muted font-arabic">{this.state.error?.message}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="rounded-lg bg-accent px-4 py-2 text-sm text-white hover:bg-accent-hover transition-colors font-arabic"
+            >
+              إعادة تحميل الصفحة
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function DocumentContent({ docId }: { docId: string }) {
   const searchParams = useSearchParams();
@@ -17,6 +51,7 @@ function DocumentContent({ docId }: { docId: string }) {
   const [selectedText, setSelectedText] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const rippleTimeout = useRef<ReturnType<typeof setTimeout>>(null);
+  const citationTimeout = useRef<ReturnType<typeof setTimeout>>(null);
 
   const openChat = useCallback((e: React.MouseEvent) => {
     // Start ripple from button center
@@ -35,12 +70,14 @@ function DocumentContent({ docId }: { docId: string }) {
     setCitationText(text);
     setCitationKey((k) => k + 1);
     setCitationNotFound(false);
-    // Auto-clear after 8 seconds
-    setTimeout(() => setCitationText(null), 15000);
+    // Auto-clear after 15 seconds
+    if (citationTimeout.current) clearTimeout(citationTimeout.current);
+    citationTimeout.current = setTimeout(() => setCitationText(null), 15000);
   }, []);
 
   const handleCitationNotFound = useCallback(() => {
     setCitationNotFound(true);
+    setCitationText(null);
     setTimeout(() => setCitationNotFound(false), 3000);
   }, []);
 
@@ -54,6 +91,17 @@ function DocumentContent({ docId }: { docId: string }) {
   const closeChat = useCallback(() => {
     setChatOpen(false);
   }, []);
+
+  // Escape key to close chat
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && chatOpen) {
+        setChatOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [chatOpen]);
 
   return (
     <div className="min-h-svh bg-white">
@@ -118,15 +166,15 @@ function DocumentContent({ docId }: { docId: string }) {
 
       {/* Chat panel — fixed to right side of viewport with slide-in */}
       {chatOpen && (
-        <div
-          className="fixed top-13 right-0 bottom-0 z-50 border-l border-border/60 bg-white shadow-[-8px_0_30px_rgba(0,0,0,0.08)]"
-          style={{
-            width: "45%",
-            animation: "chat-slide-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both",
-          }}
-        >
-          <ChatPanel docId={docId} onClose={closeChat} onCitationClick={handleCitationClick} selectedText={selectedText} onSelectedTextConsumed={() => setSelectedText(null)} onAnalyzingChange={setAnalyzing} embedded />
-        </div>
+      <div
+        className={`fixed top-13 right-0 bottom-0 z-50 border-l border-border/60 bg-white shadow-[-8px_0_30px_rgba(0,0,0,0.08)]`}
+        style={{
+          width: "45%",
+          animation: "chat-slide-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both",
+        }}
+      >
+        <ChatPanel docId={docId} onClose={closeChat} onCitationClick={handleCitationClick} selectedText={selectedText} onSelectedTextConsumed={() => setSelectedText(null)} onAnalyzingChange={setAnalyzing} embedded />
+      </div>
       )}
 
       {/* Citation not found toast */}
@@ -212,7 +260,9 @@ export default function DocumentPage({
 
   return (
     <Suspense>
-      <DocumentContent docId={docId} />
+      <DocumentErrorBoundary>
+        <DocumentContent docId={docId} />
+      </DocumentErrorBoundary>
     </Suspense>
   );
 }

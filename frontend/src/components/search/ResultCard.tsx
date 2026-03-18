@@ -29,8 +29,11 @@ export default function ResultCard({ result, index, query = "", maxScore }: Resu
         }}
         className="group cursor-pointer rounded-xl border border-border-subtle bg-bg-elevated px-5 py-4 transition-all duration-150 hover:border-border hover:shadow-sm"
       >
-        {/* Top row: title + section badge */}
+        {/* Top row: index number + title + section badge */}
         <div className="mb-2 flex items-start gap-2.5">
+          <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-bg-primary border border-border-subtle text-[10px] font-medium text-text-muted" aria-label={`نتيجة ${index + 1}`}>
+            {index + 1}
+          </span>
           <h3 className="flex-1 font-arabic text-[15px] font-semibold leading-relaxed text-text-primary line-clamp-2">
             {result.title}
           </h3>

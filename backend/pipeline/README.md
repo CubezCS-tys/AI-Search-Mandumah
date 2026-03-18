@@ -64,7 +64,7 @@ class Chunk:
 ### Usage
 
 ```python
-from pipeline.chunker import chunk_document
+from backend.pipeline.chunker import chunk_document
 
 result = chunk_document(content, doc_id="0005-076-002-001")
 for chunk in result.chunks:
@@ -101,7 +101,7 @@ class EmbeddingResult:
 ### Usage
 
 ```python
-from pipeline.embedder import BGEm3Embedder
+from backend.pipeline.embedder import BGEm3Embedder
 
 embedder = BGEm3Embedder()
 results = embedder.encode(["النص الأول", "النص الثاني"])
@@ -153,10 +153,10 @@ Created automatically on first run if the collection does not exist.
 
 ```bash
 # Ingest all documents (resumes from checkpoint)
-python -m pipeline.ingest --input-dir output/
+python -m backend.pipeline.ingest --input-dir output/
 
 # Full options
-python -m pipeline.ingest \
+python -m backend.pipeline.ingest \
   --input-dir output/ \
   --collection academic_articles \
   --batch-size 32 \

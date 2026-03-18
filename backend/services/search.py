@@ -64,7 +64,7 @@ class Searcher:
     @property
     def embedder(self):
         if self._embedder is None:
-            from pipeline.embedder import BGEm3Embedder
+            from backend.pipeline.embedder import BGEm3Embedder
             self._embedder = BGEm3Embedder()
         return self._embedder
 
@@ -217,6 +217,34 @@ class Searcher:
         if not conditions:
             return None
         return models.Filter(must=conditions)
+
+    def search_with_hyde(
+        self,
+        query: str,
+        *,
+        top_k: int = 10,
+        mode: str = "hybrid",
+        journal_id: str | None = None,
+        section: str | None = None,
+        prefetch_limit: int | None = None,
+    ) -> list[SearchResult]:
+        """Search using Hypothetical Document Embeddings (HyDE).
+
+        Generates a short hypothetical academic paragraph for the query,
+        embeds that instead of the raw query, then runs normal search.
+        Falls back to plain search on any generation error.
+        """
+        from backend.services.hyde import generate_hypothesis
+
+        hypothesis = generate_hypothesis(query)
+        return self.search(
+            hypothesis,
+            top_k=top_k,
+            mode=mode,
+            journal_id=journal_id,
+            section=section,
+            prefetch_limit=prefetch_limit,
+        )
 
     def _point_to_result(self, point) -> SearchResult:
         """Convert a Qdrant point to a SearchResult."""

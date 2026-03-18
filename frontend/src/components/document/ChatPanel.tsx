@@ -114,9 +114,9 @@ const EXTRACTION_TEMPLATES: { text: string; label: string; icon: LucideIcon }[] 
 
 /* ── Token estimation ──────────────────────────────────────── */
 
-/** Rough token estimate: ~4 chars per token for Arabic */
+/** Rough token estimate: ~3 chars per token for Arabic */
 function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  return Math.ceil(text.length / 3);
 }
 
 /** GPT-4o-mini pricing (per 1M tokens) */
@@ -158,6 +158,166 @@ function saveChatHistory(docId: string, messages: Message[]) {
   }
 }
 
+/* ── Analyzing hero ─────────────────────────────────────────── */
+
+const ANALYSIS_STEPS = [
+  { icon: FileSearch, label: "قراءة المستند", delay: 0 },
+  { icon: Layers, label: "تحليل البنية والمنهجية", delay: 2800 },
+  { icon: Target, label: "استخراج الأفكار الرئيسية", delay: 5600 },
+  { icon: Lightbulb, label: "تكوين الرؤى المعمّقة", delay: 8400 },
+] as const;
+
+function AnalyzingHero() {
+  const [visibleSteps, setVisibleSteps] = useState(0);
+  const [statusIdx, setStatusIdx] = useState(0);
+
+  const STATUS_LABELS = [
+    "يقرأ المحتوى بعمق...",
+    "يحلل المنهجية والبيانات...",
+    "يستخرج النتائج والتوصيات...",
+    "يكوّن رؤى معمّقة حول البحث...",
+  ];
+
+  useEffect(() => {
+    const timers = ANALYSIS_STEPS.map((step, i) =>
+      setTimeout(() => setVisibleSteps(i + 1), step.delay)
+    );
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setStatusIdx((prev) => (prev + 1) % STATUS_LABELS.length);
+    }, 2800);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="flex flex-col items-center pt-6 pb-6">
+      {/* Central orb */}
+      <div className="relative flex h-24 w-24 items-center justify-center mb-6">
+        {/* Outermost pulse rings */}
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            className="absolute inset-0 rounded-full"
+            style={{
+              border: "1px solid rgba(155,27,48,0.12)",
+              animation: `analysis-hero-ring 3s ease-out ${i * 1}s infinite`,
+            }}
+          />
+        ))}
+        {/* Rotating arc */}
+        <div
+          className="absolute inset-1 rounded-full"
+          style={{
+            border: "2px solid transparent",
+            borderTopColor: "rgba(155,27,48,0.3)",
+            borderRightColor: "rgba(155,27,48,0.1)",
+            animation: "analysis-hero-spin 2.5s linear infinite",
+          }}
+        />
+        {/* Counter-rotating inner arc */}
+        <div
+          className="absolute rounded-full"
+          style={{
+            inset: 10,
+            border: "1.5px solid transparent",
+            borderBottomColor: "rgba(155,27,48,0.2)",
+            borderLeftColor: "rgba(155,27,48,0.08)",
+            animation: "analysis-hero-spin 2s linear infinite reverse",
+          }}
+        />
+        {/* Glowing core */}
+        <div
+          className="relative flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-accent/15 to-accent/5"
+          style={{ animation: "analysis-glow 2.5s ease-in-out infinite" }}
+        >
+          <Sparkles size={20} className="text-accent" />
+        </div>
+        {/* Orbiting particles */}
+        {[0, 1, 2, 3].map((i) => (
+          <div
+            key={`p${i}`}
+            className="absolute top-1/2 left-1/2"
+            style={{
+              width: 0,
+              height: 0,
+              animation: `analysis-orbit ${2.8 + i * 0.4}s linear ${i * 0.5}s infinite${i % 2 ? " reverse" : ""}`,
+            }}
+          >
+            <div
+              className="rounded-full bg-accent"
+              style={{
+                width: 3 - i * 0.5,
+                height: 3 - i * 0.5,
+                opacity: 0.6 - i * 0.1,
+              }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Title */}
+      <h3 className="text-[15px] font-bold text-text-primary font-arabic mb-1">
+        تحليل ذكي للمستند
+      </h3>
+
+      {/* Cycling status text */}
+      <p
+        key={statusIdx}
+        className="text-xs text-accent/70 font-arabic animate-in fade-in slide-in-from-bottom-1 duration-300"
+      >
+        {STATUS_LABELS[statusIdx]}
+      </p>
+
+      {/* Step progress */}
+      <div className="w-full max-w-[280px] mt-6 space-y-2">
+        {ANALYSIS_STEPS.map((step, i) => {
+          const visible = i < visibleSteps;
+          const active = i === visibleSteps - 1;
+          const Icon = step.icon;
+          return (
+            <div
+              key={i}
+              className={`flex items-center gap-2.5 rounded-xl px-3 py-2 transition-all duration-500 ${
+                visible
+                  ? "opacity-100 translate-y-0"
+                  : "opacity-0 translate-y-2 pointer-events-none"
+              } ${
+                active
+                  ? "bg-accent/[0.06] border border-accent/20"
+                  : "bg-transparent border border-transparent"
+              }`}
+            >
+              <div
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors duration-500 ${
+                  active ? "bg-accent/15" : "bg-gray-100"
+                }`}
+              >
+                {active ? (
+                  <div className="h-3 w-3 rounded-full border-2 border-accent border-t-transparent animate-spin" />
+                ) : visible ? (
+                  <svg className="text-accent" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                ) : (
+                  <Icon size={13} className="text-gray-400" />
+                )}
+              </div>
+              <span
+                className={`text-[12.5px] font-arabic transition-colors duration-500 ${
+                  active ? "text-text-primary font-medium" : "text-text-muted"
+                }`}
+              >
+                {step.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ── Component ──────────────────────────────────────────────── */
 
 export default function ChatPanel({
@@ -184,6 +344,26 @@ export default function ChatPanel({
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const prevDocIdRef = useRef(docId);
+
+  // Reset all state when docId changes (navigating to a different document)
+  useEffect(() => {
+    if (prevDocIdRef.current !== docId) {
+      prevDocIdRef.current = docId;
+      setMessages(loadChatHistory(docId));
+      setAnalysis(loadCachedAnalysis(docId));
+      setAnalyzing(false);
+      analyzingTriggered.current = false;
+      setInput("");
+      setStreaming(false);
+      setShowTemplates(false);
+      setCompareDocIds([]);
+      setCompareInput("");
+      setShowCompare(false);
+      abortRef.current?.abort();
+      abortRef.current = null;
+    }
+  }, [docId]);
 
   // Track token usage for current session
   const sessionTokens = useMemo(() => {
@@ -234,14 +414,25 @@ export default function ChatPanel({
   // Auto-analyze document on first open (when no chat history and no cached analysis)
   useEffect(() => {
     if (analyzingTriggered.current) return;
-    if (messages.length > 0) return; // has chat history, skip
-    if (analysis) return; // already have cached analysis
+    // Check current state via refs/localStorage to avoid dependency issues
+    const cachedAnalysis = loadCachedAnalysis(docId);
+    if (cachedAnalysis) {
+      setAnalysis(cachedAnalysis);
+      return;
+    }
+    const history = loadChatHistory(docId);
+    if (history.length > 0) return; // has chat history, skip
+
     analyzingTriggered.current = true;
 
+    // Store controller on the ref so we can abort on docId change,
+    // but don't abort in the effect cleanup (React Strict Mode runs effects twice)
+    const controller = new AbortController();
+    abortRef.current = controller;
     setAnalyzing(true);
     onAnalyzingChange?.(true);
 
-    fetch(`${API_BASE}/api/analyze/${docId}`)
+    fetch(`${API_BASE}/api/analyze/${docId}`, { signal: controller.signal })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -250,14 +441,16 @@ export default function ChatPanel({
         setAnalysis(data);
         saveCachedAnalysis(docId, data);
       })
-      .catch(() => {
-        // Silently fail — user can still use chat normally
+      .catch((e) => {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        console.warn("[ChatPanel] analyze failed:", e);
       })
       .finally(() => {
         setAnalyzing(false);
         onAnalyzingChange?.(false);
       });
-  }, [docId, messages.length, analysis, onAnalyzingChange]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId]);
 
   const sendMessage = useCallback(
     async (text: string, overrideHistory?: Message[]) => {
@@ -305,13 +498,16 @@ export default function ChatPanel({
         const reader = res.body!.getReader();
         const decoder = new TextDecoder();
         let accumulated = "";
+        let sseBuffer = "";
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n");
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split("\n");
+          // Keep the last (possibly incomplete) line in the buffer
+          sseBuffer = lines.pop() || "";
 
           for (const line of lines) {
             if (!line.startsWith("data: ")) continue;
@@ -410,11 +606,19 @@ export default function ChatPanel({
   const copyMessage = useCallback(async (text: string, idx: number) => {
     try {
       await navigator.clipboard.writeText(text);
-      setCopiedIdx(idx);
-      setTimeout(() => setCopiedIdx(null), 2000);
     } catch {
-      // fallback
+      // Fallback for environments without clipboard API
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
     }
+    setCopiedIdx(idx);
+    setTimeout(() => setCopiedIdx(null), 2000);
   }, []);
 
   const exportChat = useCallback(() => {
@@ -482,76 +686,92 @@ export default function ChatPanel({
     hr: () => <hr className="my-3 border-border/30" />,
   }), []);
 
-  /** Render content with markdown and clickable citations */
-  function renderContent(text: string) {
-    // Split on «guillemet» citations — they become clickable buttons
-    const rawParts = text.split(/(«[^»]+»)/g);
+  /** Inline variant — p renders as inline span so citations flow in prose */
+  const inlineMdComponents: Record<string, React.ComponentType<Record<string, unknown>>> = useMemo(() => ({
+    ...mdComponents,
+    p: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
+  }), [mdComponents]);
 
-    // Merge adjacent citations separated by small Arabic connectors (و، أو، ثم، ...)
-    // e.g. «phrase1» و«phrase2» → one citation «phrase1 وphrase2»
-    const parts: string[] = [];
-    for (let i = 0; i < rawParts.length; i++) {
-      const cur = rawParts[i];
-      if (
-        cur.startsWith("«") && cur.endsWith("»") &&
-        parts.length >= 1 &&
-        parts[parts.length - 1].startsWith("«") && parts[parts.length - 1].endsWith("»")
-      ) {
-        // Check if the gap between the two citations is just a small connector
-        // (the gap would be the part right before 'cur' which hasn't been pushed yet — 
-        //  actually let's look at the last pushed non-citation part)
-      }
-      parts.push(cur);
-    }
-    // Second pass: merge «a» connector «b» into «a connector b»
+  /** Merge adjacent «a» connector «b» → «a connector b» */
+  function mergeCitations(rawParts: string[]): string[] {
     const merged: string[] = [];
-    for (let i = 0; i < parts.length; i++) {
-      const isCit = parts[i].startsWith("«") && parts[i].endsWith("»");
+    for (let i = 0; i < rawParts.length; i++) {
+      const isCit = rawParts[i].startsWith("«") && rawParts[i].endsWith("»");
       if (
         isCit &&
         merged.length >= 2 &&
         merged[merged.length - 2].startsWith("«") && merged[merged.length - 2].endsWith("»")
       ) {
         const gap = merged[merged.length - 1];
-        // Small connector: just whitespace + و/أو/ثم/في/من/إلى/على + whitespace, or comma-separated
-        if (/^\s*[،,]?\s*(?:و|أو|ثم|في|من|إلى|على)?\s*$/.test(gap) && gap.trim().length <= 5) {
-          // Merge: remove the gap and previous citation, combine into one
+        if (/^\s*[،,]?\s*(?:و|أو|ثم|في|من|إلى|على|عن|مع|بين|بل|لا|لم|هو|هي|أن|إن|كان|كما|حيث|لكن)?\s*$/.test(gap) && gap.trim().length <= 5) {
           const prev = merged[merged.length - 2];
-          merged.pop(); // remove gap
-          merged.pop(); // remove prev citation
-          const prevText = prev.slice(1, -1); // strip «»
-          const curText = parts[i].slice(1, -1);
+          merged.pop();
+          merged.pop();
+          const prevText = prev.slice(1, -1);
+          const curText = rawParts[i].slice(1, -1);
           merged.push(`«${prevText}${gap}${curText}»`);
           continue;
         }
       }
-      merged.push(parts[i]);
+      merged.push(rawParts[i]);
     }
+    return merged;
+  }
 
-    return merged.map((part, i) => {
-      if (part.startsWith("«") && part.endsWith("»")) {
-        const cited = part.slice(1, -1);
+  /** Render content with markdown and clickable citations */
+  function renderContent(text: string) {
+    // Split into paragraph-level blocks (double newlines)
+    const blocks = text.split(/\n\n+/);
+
+    return blocks.map((block, bIdx) => {
+      const trimmed = block.trim();
+      if (!trimmed) return null;
+
+      // No citations → full markdown with block-level elements
+      if (!trimmed.includes("«")) {
         return (
-          <button
-            key={i}
-            onClick={() => onCitationClick?.(cited)}
-            className="inline cursor-pointer rounded bg-accent/10 px-1 text-accent hover:bg-accent/20 transition-colors"
-            title="اضغط للعثور عليه في المستند"
+          <ReactMarkdown
+            key={bIdx}
+            remarkPlugins={[remarkGfm]}
+            components={mdComponents}
           >
-            «{cited}»
-          </button>
+            {trimmed}
+          </ReactMarkdown>
         );
       }
-      // Render non-citation text as markdown
-      if (!part.trim()) return null;
+
+      // Has citations → split, merge, render inline
+      const rawParts = trimmed.split(/(«[^»]+»)/g);
+      const merged = mergeCitations(rawParts);
+
       return (
-        <ReactMarkdown
-          key={i}
-          remarkPlugins={[remarkGfm]}
-          components={mdComponents}
-        >
-          {part}
-        </ReactMarkdown>
+        <span key={bIdx} className="block mb-2 last:mb-0">
+          {merged.map((part, i) => {
+            if (part.startsWith("«") && part.endsWith("»")) {
+              const cited = part.slice(1, -1);
+              return (
+                <button
+                  key={i}
+                  onClick={() => onCitationClick?.(cited)}
+                  className="inline cursor-pointer rounded-md border border-accent/25 bg-accent/[0.08] px-1.5 py-0.5 text-accent font-medium hover:bg-accent/20 hover:border-accent/40 transition-colors"
+                  title="اضغط للعثور عليه في المستند"
+                >
+                  «{cited}»
+                </button>
+              );
+            }
+            if (!part.trim()) return null;
+            return (
+              <ReactMarkdown
+                key={i}
+                remarkPlugins={[remarkGfm]}
+                components={inlineMdComponents}
+              >
+                {part}
+              </ReactMarkdown>
+            );
+          })}
+        </span>
       );
     });
   }
@@ -685,56 +905,7 @@ export default function ChatPanel({
           <div className="flex flex-col pt-4 pb-4 animate-in fade-in duration-500">
             {/* Analyzing state */}
             {analyzing && !analysis && (
-              <div className="flex flex-col items-center pt-8 pb-6">
-                {/* Animated analysis orb */}
-                <div className="relative flex h-20 w-20 items-center justify-center mb-5">
-                  {/* Outer breathing ring */}
-                  <div
-                    className="absolute inset-0 rounded-full border border-accent/20"
-                    style={{ animation: "analysis-ring 3s ease-in-out infinite" }}
-                  />
-                  {/* Inner glowing container */}
-                  <div
-                    className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-accent/10 to-accent/[0.04]"
-                    style={{ animation: "analysis-glow 2.5s ease-in-out infinite" }}
-                  >
-                    <Sparkles size={24} className="text-accent" style={{ animation: "analyze-vignette 2s ease-in-out infinite" }} />
-                  </div>
-                  {/* Orbiting dot 1 */}
-                  <div
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
-                    style={{ animation: "analysis-orbit 3s linear infinite" }}
-                  >
-                    <div className="h-1.5 w-1.5 rounded-full bg-accent/60" />
-                  </div>
-                  {/* Orbiting dot 2 — opposite phase */}
-                  <div
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
-                    style={{ animation: "analysis-orbit 3s linear infinite reverse" }}
-                  >
-                    <div className="h-1 w-1 rounded-full bg-accent/40" />
-                  </div>
-                </div>
-                <h3 className="text-base font-semibold text-text-primary font-arabic mb-1">
-                  جاري تحليل المستند...
-                </h3>
-                <p className="text-xs text-text-muted font-arabic max-w-[260px] text-center">
-                  يتم فحص المحتوى واستخراج الأفكار الرئيسية
-                </p>
-                {/* Progress wave bars */}
-                <div className="flex gap-1 mt-4">
-                  {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-                    <div
-                      key={i}
-                      className="w-1 rounded-full bg-accent/70"
-                      style={{
-                        height: 12,
-                        animation: `analysis-wave 1.2s ease-in-out ${i * 0.1}s infinite`,
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
+              <AnalyzingHero />
             )}
 
             {/* Analysis results — insight cards */}
@@ -767,11 +938,10 @@ export default function ChatPanel({
                       <button
                         key={idx}
                         onClick={() => {
-                          // Click to ask about this insight's quote
+                          // Click navigates to the citation in the document
                           if (insight.quote) {
                             onCitationClick?.(insight.quote);
                           }
-                          sendMessage(`أخبرني بالتفصيل عن: ${insight.label}`);
                         }}
                         className="group w-full rounded-xl border border-border/50 p-3 text-right hover:border-accent/30 hover:bg-accent/[0.02] transition-all duration-200 font-arabic"
                         dir="rtl"
@@ -842,28 +1012,39 @@ export default function ChatPanel({
               </div>
             )}
 
-            {/* Fallback: no analysis yet and not analyzing (shouldn't happen, but just in case) */}
+            {/* Fallback: no analysis — polished empty state with suggested questions */}
             {!analysis && !analyzing && (
-              <div className="flex flex-col items-center pt-8 pb-4">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-accent/[0.07] mb-4">
-                  <MessageSquare size={28} className="text-accent" />
+              <div className="flex flex-col items-center pt-6 pb-4 animate-in fade-in duration-500">
+                {/* Orb icon */}
+                <div className="relative flex h-20 w-20 items-center justify-center mb-5">
+                  <div
+                    className="absolute inset-0 rounded-full border border-accent/15"
+                    style={{ animation: "analysis-ring 3s ease-in-out infinite" }}
+                  />
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-accent/12 to-accent/[0.03]">
+                    <MessageSquare size={24} className="text-accent" />
+                  </div>
                 </div>
-                <h3 className="text-base font-semibold text-text-primary font-arabic mb-1">
-                  اسأل أي سؤال عن هذا المستند
+
+                <h3 className="text-[15px] font-bold text-text-primary font-arabic mb-1">
+                  اسأل أي سؤال عن المستند
                 </h3>
-                <p className="text-xs text-text-muted font-arabic mb-6 max-w-[260px] text-center">
-                  المساعد يحلل المستند الكامل ويجيب بناءً على محتواه فقط
+                <p className="text-xs text-text-muted font-arabic mb-6 max-w-[260px] text-center leading-relaxed">
+                  المساعد يحلل المستند الكامل ويجيب بناءً على محتواه
                 </p>
+
+                {/* Question cards — 2-col grid */}
                 <div className="w-full grid grid-cols-2 gap-2 mb-4">
-                  {SUGGESTED_QUESTIONS.map((q) => (
+                  {SUGGESTED_QUESTIONS.map((q, i) => (
                     <button
                       key={q.text}
                       onClick={() => sendMessage(q.text)}
-                      className="group flex items-start gap-2 rounded-xl border border-border/60 px-3 py-2.5 text-right text-[13px] text-text-secondary hover:border-accent/30 hover:bg-accent/[0.03] transition-all duration-200 font-arabic"
+                      className="group flex items-center gap-2 rounded-xl border border-border/50 px-3 py-2.5 text-right text-[12.5px] text-text-secondary hover:border-accent/30 hover:bg-accent/[0.04] hover:shadow-sm transition-all duration-200 font-arabic animate-in fade-in slide-in-from-bottom-2"
+                      style={{ animationDelay: `${i * 80}ms`, animationFillMode: "both" }}
                       dir="rtl"
                     >
-                      <span className="mt-0.5 text-accent/70 group-hover:scale-110 transition-transform">
-                        <q.icon size={16} />
+                      <span className="shrink-0 flex h-7 w-7 items-center justify-center rounded-lg bg-accent/[0.06] group-hover:bg-accent/12 transition-colors">
+                        <q.icon size={14} className="text-accent/70" />
                       </span>
                       <span className="leading-snug">{q.text}</span>
                     </button>
