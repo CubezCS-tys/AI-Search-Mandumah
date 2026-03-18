@@ -328,13 +328,14 @@ async def get_page_image(doc_id: str, page_num: int):
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str
+    content: str = Field(..., max_length=100_000)
 
 
 class ChatRequest(BaseModel):
     doc_id: str
-    message: str
+    message: str = Field(..., max_length=10_000)
     history: list[ChatMessage] = Field(default=[], max_length=40)
+    compare_doc_ids: list[str] = Field(default=[], max_length=3)
 
 
 def _load_doc_content(json_path: Path) -> str:
@@ -343,23 +344,67 @@ def _load_doc_content(json_path: Path) -> str:
         return json.load(f).get("content", "")
 
 
+# LRU cache for document content (avoids re-reading JSON on every chat message)
+_DOC_CONTENT_CACHE_MAX = 50
+_doc_content_cache: OrderedDict[str, str] = OrderedDict()
+
+
+def _load_doc_content_cached(json_path: Path) -> str:
+    """Cached wrapper around _load_doc_content."""
+    key = str(json_path)
+    if key in _doc_content_cache:
+        _doc_content_cache.move_to_end(key)
+        return _doc_content_cache[key]
+    content = _load_doc_content(json_path)
+    _doc_content_cache[key] = content
+    if len(_doc_content_cache) > _DOC_CONTENT_CACHE_MAX:
+        _doc_content_cache.popitem(last=False)
+    return content
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
-    """Stream a chat response grounded in a single document."""
+    """Stream a chat response grounded in one or more documents."""
     if not _DOC_ID_RE.match(req.doc_id):
         raise HTTPException(400, "Invalid document ID format")
 
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
 
+    # Validate compare doc IDs
+    for cid in req.compare_doc_ids:
+        if not _DOC_ID_RE.match(cid):
+            raise HTTPException(400, f"Invalid compare document ID format: {cid}")
+
     json_path = _doc_dir(req.doc_id) / f"{req.doc_id}.json"
     if not json_path.is_file():
         raise HTTPException(404, "Document not found")
 
-    content = await asyncio.to_thread(_load_doc_content, json_path)
+    content = await asyncio.to_thread(_load_doc_content_cached, json_path)
+
+    if not content or not content.strip():
+        raise HTTPException(422, "Document has no extractable text content")
+
+    # Load comparison documents if any
+    compare_contents: list[tuple[str, str]] = []
+    for cid in req.compare_doc_ids:
+        if cid == req.doc_id:
+            continue  # skip duplicates
+        cpath = _doc_dir(cid) / f"{cid}.json"
+        if cpath.is_file():
+            ccontent = await asyncio.to_thread(_load_doc_content_cached, cpath)
+            if ccontent and ccontent.strip():
+                compare_contents.append((cid, ccontent))
+
     history = [{"role": m.role, "content": m.content} for m in req.history]
 
-    from services.chat import stream_chat
+    from services.chat import stream_chat, stream_chat_multi
+
+    if compare_contents:
+        return StreamingResponse(
+            stream_chat_multi(content, compare_contents, req.message, history),
+            media_type="text/event-stream",
+        )
 
     return StreamingResponse(
         stream_chat(content, req.message, history),

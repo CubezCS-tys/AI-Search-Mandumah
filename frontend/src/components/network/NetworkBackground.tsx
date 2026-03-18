@@ -31,6 +31,7 @@ interface Edge {
 
 export interface NetworkHandle {
   triggerSearch: (scores?: number[]) => Promise<void>;
+  startIdlePulse: () => void;
   getResultPositions: () => { x: number; y: number }[];
 }
 
@@ -132,6 +133,8 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
   const hnswPathsRef     = useRef<number[][]>([]);
   const resultScreenPosRef = useRef<{ x: number; y: number }[]>([]);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
+  const idlePulseRef = useRef(false);
+  const idlePulseStartRef = useRef(0);
 
   /* ── Init ──────────────────────────────────────────────────── */
 
@@ -172,7 +175,15 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
 
   useImperativeHandle(ref, () => ({
     getResultPositions: () => resultScreenPosRef.current,
+    startIdlePulse: () => {
+      // Zoom in and start gentle random pulsing on nodes (no real scores)
+      idlePulseRef.current = true;
+      idlePulseStartRef.current = elapsedRef.current;
+      zoomRef.current.target = 1.45;
+    },
     triggerSearch: (scores?: number[]) => new Promise<void>((resolve) => {
+      // Stop idle pulse, start real search
+      idlePulseRef.current = false;
       searchActiveRef.current = true;
       searchStartRef.current = elapsedRef.current;
       resolveRef.current = resolve;
@@ -283,6 +294,9 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
         resolveRef.current?.();
         resolveRef.current = null;
       }
+    } else if (idlePulseRef.current) {
+      // Zoomed in with gentle idle searching
+      zoom.current += (zoom.target - zoom.current) * (1 - Math.exp(-zoomSpeed * dt));
     } else {
       zoom.target = 1;
       zoom.current += (1 - zoom.current) * (1 - Math.exp(-zoomSpeed * 0.8 * dt));
@@ -290,7 +304,8 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
 
     // Rotation (dt-based)
     const rot = rotRef.current;
-    rot.y += (searchActiveRef.current ? 0.18 : 0.09) * dt;
+    const rotSpeed = searchActiveRef.current ? 0.18 : idlePulseRef.current ? 0.14 : 0.09;
+    rot.y += rotSpeed * dt;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -336,6 +351,20 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
           const glow = Math.exp(-at * 1.0) * 0.6;
           node.brightness = Math.max(0, wave) + glow;
         }
+      } else if (idlePulseRef.current) {
+        // Gentle random pulsing while waiting for API
+        const idleT = t - idlePulseStartRef.current;
+        // Repeating wave: each ~1.5s a new pulse originates from center
+        const wavePeriod = 1.5;
+        const waveAge = idleT % wavePeriod;
+        // Node lights up when wave front passes its angular position
+        const wavePhase = waveAge / wavePeriod; // 0→1
+        const nodeAngle = (node.theta + node.phi) / (Math.PI * 2); // 0→~1
+        const dist = Math.abs(wavePhase - (nodeAngle % 1));
+        const hit = dist < 0.12 || dist > 0.88; // near the wave front
+        const pulse = hit ? 0.35 * Math.exp(-Math.min(dist, 1 - dist) * 12) : 0;
+        const ambient = 0.06 + 0.04 * Math.sin(idleT * 2 + node.theta * 3);
+        node.brightness = Math.max(0, ambient + pulse);
       } else {
         node.brightness *= Math.exp(-6 * dt); // smooth exponential decay
       }
@@ -474,6 +503,28 @@ const NetworkBackground = forwardRef<NetworkHandle>(function NetworkBackground(_
       ctx.arc(node.px, node.py, size, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${r | 0},${g | 0},${b | 0},${alpha})`;
       ctx.fill();
+    }
+
+    // ── Idle pulse wave rings ─────────────────────────────────
+
+    if (idlePulseRef.current && !searchActiveRef.current) {
+      const idleT = t - idlePulseStartRef.current;
+      const wavePeriod = 1.5;
+      // Draw up to 2 concurrent rings
+      for (let w = 0; w < 2; w++) {
+        const waveAge = (idleT + w * wavePeriod * 0.5) % wavePeriod;
+        const rp = waveAge / wavePeriod;
+        const rr = rp * Rdpr * 1.05;
+        const ra = (1 - rp) * 0.18;
+        if (ra > 0.005 && rr > 5) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${ra})`;
+          ctx.lineWidth = 1.5 * dpr;
+          ctx.setLineDash([]);
+          ctx.stroke();
+        }
+      }
     }
 
     // ── Search visualization ─────────────────────────────────

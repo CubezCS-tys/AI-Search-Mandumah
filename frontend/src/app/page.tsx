@@ -12,7 +12,7 @@ import SonarPulseAnimation from "@/components/network/SonarPulseAnimation";
 import SearchPreview from "@/components/network/SearchPreview";
 import { search } from "@/lib/api";
 import { setPrefetchedSearch } from "@/lib/hooks/useSearch";
-import type { SearchMode, SearchResponse } from "@/types/search";
+import type { SearchMode } from "@/types/search";
 import type { SearchResultItem } from "@/types/search";
 
 type AnimPhase = "idle" | "embedding" | "searching";
@@ -28,9 +28,28 @@ export default function Home() {
   const searchModeRef = useRef<SearchMode>("hybrid");
   const pendingScoresRef = useRef<number[]>([]);
   const [previewResults, setPreviewResults] = useState<SearchResultItem[]>([]);
-  const searchPromiseRef = useRef<Promise<SearchResponse | null> | null>(null);
-  const revealCanvasRef = useRef<HTMLCanvasElement>(null);
-  const revealRafRef = useRef(0);
+  const apiDoneRef = useRef(false);
+  const animDoneRef = useRef(false);
+  const searchingRef = useRef(false);
+
+  // When API results arrive and globe is already showing, fire real search
+  const maybeRealSearch = useCallback(() => {
+    if (!apiDoneRef.current || !animDoneRef.current) return;
+    if (searchingRef.current) return; // already fired
+    searchingRef.current = true;
+    // Trigger the real search animation with actual scores
+    if (networkRef.current) {
+      networkRef.current.triggerSearch(pendingScoresRef.current);
+    }
+    // Navigate after the real globe animation plays
+    setTimeout(() => {
+      const params = new URLSearchParams({
+        q: searchQueryRef.current,
+        mode: searchModeRef.current,
+      });
+      router.push(`/search?${params.toString()}`);
+    }, 2500);
+  }, [router]);
 
   const handleSearch = useCallback(
     (query: string, mode: SearchMode) => {
@@ -40,89 +59,38 @@ export default function Home() {
       searchModeRef.current = mode;
       pendingScoresRef.current = [];
       setPreviewResults([]);
+      apiDoneRef.current = false;
+      animDoneRef.current = false;
+      searchingRef.current = false;
       setPhase("embedding");
 
-      const promise = search({ query, mode, top_k: 20 })
+      search({ query, mode, top_k: 20 })
         .then(res => {
           pendingScoresRef.current = res.results.map(r => r.score);
           setPreviewResults(res.results.slice(0, 5));
           setPrefetchedSearch({ query, mode, top_k: 20 }, res);
+          apiDoneRef.current = true;
+          maybeRealSearch();
           return res;
         })
-        .catch(() => null);
-      searchPromiseRef.current = promise;
+        .catch(() => {
+          apiDoneRef.current = true;
+          maybeRealSearch();
+        });
     },
-    []
+    [maybeRealSearch]
   );
 
-  const handleEmbeddingDone = useCallback(async () => {
-    // Wait for API results before transitioning to search phase
-    await searchPromiseRef.current;
-
-    // Circular reveal: white overlay with expanding hole from center
-    const canvas = revealCanvasRef.current;
-    if (canvas) {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      canvas.width = vw * dpr;
-      canvas.height = vh * dpr;
-      canvas.style.width = `${vw}px`;
-      canvas.style.height = `${vh}px`;
-      canvas.style.display = "block";
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        const maxR = Math.sqrt(vw * vw + vh * vh) / 2;
-        const ccx = (vw * dpr) / 2;
-        const ccy = (vh * dpr) / 2;
-        const start = performance.now();
-        const DURATION = 700;
-
-        const animateReveal = (now: number) => {
-          const t = Math.min((now - start) / DURATION, 1);
-          const eased = 1 - (1 - t) * (1 - t);
-          const r = eased * maxR * dpr;
-
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(0, 0, canvas.width, canvas.height);
-          ctx.arc(ccx, ccy, r, 0, Math.PI * 2, true);
-          ctx.fillStyle = "rgba(250,250,250,0.95)";
-          ctx.fill();
-          ctx.restore();
-
-          // Accent glow ring at the expanding edge
-          if (r > 0) {
-            const glowAlpha = 0.25 * (1 - t * 0.7);
-            ctx.beginPath();
-            ctx.arc(ccx, ccy, r, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(155,27,48,${glowAlpha})`;
-            ctx.lineWidth = 6 * dpr;
-            ctx.stroke();
-          }
-
-          if (t < 1) {
-            revealRafRef.current = requestAnimationFrame(animateReveal);
-          } else {
-            canvas.style.display = "none";
-          }
-        };
-        revealRafRef.current = requestAnimationFrame(animateReveal);
-      }
-    }
-
+  const handleEmbeddingDone = useCallback(() => {
+    animDoneRef.current = true;
+    // Show globe immediately with idle pulses
     setPhase("searching");
     if (networkRef.current) {
-      await networkRef.current.triggerSearch(pendingScoresRef.current);
+      networkRef.current.startIdlePulse();
     }
-    const params = new URLSearchParams({
-      q: searchQueryRef.current,
-      mode: searchModeRef.current,
-    });
-    router.push(`/search?${params.toString()}`);
-  }, [router]);
+    // If API already done, fire real search right away
+    maybeRealSearch();
+  }, [maybeRealSearch]);
 
   return (
     <div className="relative flex min-h-svh flex-col items-center justify-center px-6 overflow-hidden">
@@ -242,14 +210,6 @@ export default function Home() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Circular reveal overlay */}
-      <canvas
-        ref={revealCanvasRef}
-        className="fixed inset-0 pointer-events-none"
-        style={{ zIndex: 5, display: "none" }}
-        aria-hidden="true"
-      />
 
       {/* Result preview cards connected to globe nodes */}
       <SearchPreview

@@ -11,9 +11,9 @@ interface Props {
 const ACCENT_R = 155, ACCENT_G = 27, ACCENT_B = 48;
 const GLOW_R = 220, GLOW_G = 60, GLOW_B = 90;
 
-// Phase durations — original text anim, snappy dot transition
+// Phase durations — text analysis only, globe handled by NetworkBackground
 const P_APPEAR    = 0.5;
-const P_UNDERLINE = 1.2;
+const P_UNDERLINE = 1.8;
 const P_DISSOLVE  = 1.0;
 const P_CONVERGE  = 0.35;
 const P_FLASH     = 0.15;
@@ -344,28 +344,7 @@ export default function SonarPulseAnimation({ query, onEmbeddingDone, onComplete
       }
     }
 
-    // ── Persistent center dot (bridge to reveal transition) ──
-    if (t >= tFlash) {
-      const dotAge = t - tFlash;
-      const dotFade = clamp01(dotAge / 0.2);
-      const dotPulse = 0.65 + 0.35 * Math.sin(dotAge * 3.5);
-      const dotAlpha = dotFade * dotPulse * 0.85;
-      const dotR = (4 + dotFade * 2) * dpr;
 
-      const grad = ctx.createRadialGradient(cx * dpr, cy * dpr, 0, cx * dpr, cy * dpr, dotR * 4);
-      grad.addColorStop(0, `rgba(${GLOW_R},${GLOW_G},${GLOW_B},${dotAlpha * 0.4})`);
-      grad.addColorStop(0.5, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${dotAlpha * 0.15})`);
-      grad.addColorStop(1, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},0)`);
-      ctx.beginPath();
-      ctx.arc(cx * dpr, cy * dpr, dotR * 4, 0, Math.PI * 2);
-      ctx.fillStyle = grad;
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(cx * dpr, cy * dpr, dotR, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${dotAlpha})`;
-      ctx.fill();
-    }
 
     // ── Evolving status label ─────────────────────────────────
     if (t > tUnder + 0.2 && t < tDissolve + 0.5) {
@@ -392,7 +371,7 @@ export default function SonarPulseAnimation({ query, onEmbeddingDone, onComplete
     }
 
     // ── Callbacks ───────────────────────────────────────────
-    if (t > tFlash && !firedRef.current) { firedRef.current = true; onEmbeddingDone(); }
+    if (t > TOTAL && !firedRef.current) { firedRef.current = true; onEmbeddingDone(); }
     if (t > TOTAL && !doneRef.current) { doneRef.current = true; onComplete(); }
     animRef.current = requestAnimationFrame(draw);
   }, [query, onEmbeddingDone, onComplete]);

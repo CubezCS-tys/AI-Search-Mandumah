@@ -12,6 +12,9 @@ function DocumentContent({ docId }: { docId: string }) {
   const [chatOpen, setChatOpen] = useState(false);
   const [ripple, setRipple] = useState<{ x: number; y: number } | null>(null);
   const [citationText, setCitationText] = useState<string | null>(null);
+  const [citationKey, setCitationKey] = useState(0);
+  const [citationNotFound, setCitationNotFound] = useState(false);
+  const [selectedText, setSelectedText] = useState<string | null>(null);
   const rippleTimeout = useRef<ReturnType<typeof setTimeout>>(null);
 
   const openChat = useCallback((e: React.MouseEvent) => {
@@ -29,9 +32,23 @@ function DocumentContent({ docId }: { docId: string }) {
 
   const handleCitationClick = useCallback((text: string) => {
     setCitationText(text);
+    setCitationKey((k) => k + 1);
+    setCitationNotFound(false);
     // Auto-clear after 8 seconds
-    setTimeout(() => setCitationText(null), 8000);
+    setTimeout(() => setCitationText(null), 15000);
   }, []);
+
+  const handleCitationNotFound = useCallback(() => {
+    setCitationNotFound(true);
+    setTimeout(() => setCitationNotFound(false), 3000);
+  }, []);
+
+  const handleAskAboutSelection = useCallback((text: string) => {
+    setSelectedText(text);
+    if (!chatOpen) {
+      setChatOpen(true);
+    }
+  }, [chatOpen]);
 
   const closeChat = useCallback(() => {
     setChatOpen(false);
@@ -95,7 +112,7 @@ function DocumentContent({ docId }: { docId: string }) {
         className="transition-all duration-500 ease-out"
         style={{ marginRight: chatOpen ? "45%" : "0" }}
       >
-        <DocumentViewer docId={docId} query={query} chatOpen={chatOpen} citationText={citationText} />
+        <DocumentViewer docId={docId} query={query} chatOpen={chatOpen} citationText={citationText} citationKey={citationKey} onCitationNotFound={handleCitationNotFound} onAskAboutSelection={handleAskAboutSelection} />
       </div>
 
       {/* Chat panel — fixed to right side of viewport */}
@@ -104,7 +121,17 @@ function DocumentContent({ docId }: { docId: string }) {
           className="fixed top-13 right-0 bottom-0 z-50 border-l border-border bg-white transition-all duration-500 ease-out"
           style={{ width: "45%" }}
         >
-          <ChatPanel docId={docId} onClose={closeChat} onCitationClick={handleCitationClick} embedded />
+          <ChatPanel docId={docId} onClose={closeChat} onCitationClick={handleCitationClick} selectedText={selectedText} onSelectedTextConsumed={() => setSelectedText(null)} embedded />
+        </div>
+      )}
+
+      {/* Citation not found toast */}
+      {citationNotFound && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[300] animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="rounded-xl bg-gray-900 text-white px-4 py-2.5 text-sm shadow-xl font-arabic flex items-center gap-2">
+            <span className="text-amber-400">⚠</span>
+            <span>لم يتم العثور على هذا الاقتباس في المستند</span>
+          </div>
         </div>
       )}
 

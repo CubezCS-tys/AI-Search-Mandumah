@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronsUp,
   ChevronsDown,
+  MessageSquareText,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -70,6 +71,121 @@ function polygonToRect(
 /** Remove Arabic diacritics (tashkeel) for fuzzy matching. */
 function stripTashkeel(s: string) {
   return s.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, "");
+}
+
+/* ── Citation matching strategies ───────────────────────────── */
+
+type FlatWord = { norm: string; globalIdx: number };
+
+/** Strategy 1: Exact consecutive word match */
+function findExactConsecutive(allWords: FlatWord[], citTokens: string[]): Set<number> {
+  const matched = new Set<number>();
+  for (let i = 0; i <= allWords.length - citTokens.length; i++) {
+    let ok = true;
+    for (let j = 0; j < citTokens.length; j++) {
+      if (!allWords[i + j].norm.includes(citTokens[j])) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) {
+      for (let j = 0; j < citTokens.length; j++) matched.add(allWords[i + j].globalIdx);
+      return matched; // first match is enough
+    }
+  }
+  return matched;
+}
+
+/** Strategy 2: Tolerant window — allow up to 20% mismatched tokens */
+function findTolerantWindow(allWords: FlatWord[], citTokens: string[]): Set<number> {
+  const maxMiss = Math.max(1, Math.floor(citTokens.length * 0.2));
+  let bestStart = -1;
+  let bestMisses = citTokens.length + 1;
+
+  for (let i = 0; i <= allWords.length - citTokens.length; i++) {
+    let misses = 0;
+    for (let j = 0; j < citTokens.length; j++) {
+      if (!allWords[i + j].norm.includes(citTokens[j])) {
+        misses++;
+        if (misses > maxMiss) break;
+      }
+    }
+    if (misses <= maxMiss && misses < bestMisses) {
+      bestMisses = misses;
+      bestStart = i;
+      if (misses === 0) break;
+    }
+  }
+
+  const matched = new Set<number>();
+  if (bestStart >= 0) {
+    for (let j = 0; j < citTokens.length; j++) matched.add(allWords[bestStart + j].globalIdx);
+  }
+  return matched;
+}
+
+/** Strategy 3: Substring match — join OCR words, find the citation as a substring */
+function findSubstringMatch(allWords: FlatWord[], citNorm: string): Set<number> {
+  // Build a running concatenation, track which characters belong to which word
+  const charToWord: number[] = [];
+  let text = "";
+  for (let i = 0; i < allWords.length; i++) {
+    if (i > 0) { text += " "; charToWord.push(-1); }
+    for (let c = 0; c < allWords[i].norm.length; c++) {
+      text += allWords[i].norm[c];
+      charToWord.push(i);
+    }
+  }
+
+  const pos = text.indexOf(citNorm);
+  if (pos === -1) return new Set<number>();
+
+  const matched = new Set<number>();
+  for (let c = pos; c < pos + citNorm.length; c++) {
+    const wi = charToWord[c];
+    if (wi >= 0) matched.add(allWords[wi].globalIdx);
+  }
+  return matched;
+}
+
+/** Strategy 4: Key-phrase cluster — find densest region containing distinctive words */
+function findKeyPhraseCluster(allWords: FlatWord[], citTokens: string[]): Set<number> {
+  // Use only distinctive tokens (length >= 3 chars)
+  const keys = citTokens.filter((t) => t.length >= 3);
+  if (keys.length < 2) return new Set<number>();
+
+  // Find all positions where key tokens appear
+  const positions: number[] = [];
+  for (let i = 0; i < allWords.length; i++) {
+    if (keys.some((k) => allWords[i].norm.includes(k))) {
+      positions.push(i);
+    }
+  }
+  if (positions.length < 2) return new Set<number>();
+
+  // Find the densest window of `keys.length` matches within a window of citTokens.length * 2
+  const windowSize = citTokens.length * 2;
+  let bestScore = 0;
+  let bestStart = -1;
+  let bestEnd = -1;
+
+  for (let i = 0; i < positions.length; i++) {
+    let end = i;
+    while (end + 1 < positions.length && positions[end + 1] - positions[i] < windowSize) end++;
+    const score = end - i + 1;
+    if (score > bestScore) {
+      bestScore = score;
+      bestStart = positions[i];
+      bestEnd = positions[end];
+    }
+  }
+
+  // Need at least 40% of key tokens matched in window
+  if (bestScore < Math.ceil(keys.length * 0.4)) return new Set<number>();
+
+  const matched = new Set<number>();
+  for (let i = bestStart; i <= bestEnd; i++) matched.add(allWords[i].globalIdx);
+  return matched;
 }
 
 /** Check if a word matches any of the search tokens. */
@@ -286,9 +402,9 @@ function PageView({
           const styles: React.CSSProperties =
             r.type === "citation"
               ? {
-                  background: "linear-gradient(180deg, rgba(59,130,246,0.12) 0%, rgba(59,130,246,0.22) 100%)",
-                  border: "1.5px solid rgba(59,130,246,0.35)",
-                  boxShadow: "0 1px 6px rgba(59,130,246,0.15)",
+                  background: "linear-gradient(180deg, rgba(155,27,48,0.12) 0%, rgba(155,27,48,0.25) 100%)",
+                  border: "1.5px solid rgba(155,27,48,0.4)",
+                  boxShadow: "0 1px 8px rgba(155,27,48,0.18)",
                 }
               : r.type === "active"
                 ? {
@@ -381,9 +497,12 @@ interface DocumentViewerProps {
   query?: string;
   chatOpen?: boolean;
   citationText?: string | null;
+  citationKey?: number;
+  onCitationNotFound?: () => void;
+  onAskAboutSelection?: (text: string) => void;
 }
 
-export default function DocumentViewer({ docId, query = "", chatOpen = false, citationText = null }: DocumentViewerProps) {
+export default function DocumentViewer({ docId, query = "", chatOpen = false, citationText = null, citationKey = 0, onCitationNotFound, onAskAboutSelection }: DocumentViewerProps) {
   const router = useRouter();
   const [ocrData, setOcrData] = useState<OcrData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -392,6 +511,36 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
   const [highlight, setHighlight] = useState(true);
   const [currentMatchIdx, setCurrentMatchIdx] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Text selection for "ask about this" feature
+  const [selectionPopup, setSelectionPopup] = useState<{ text: string; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+        setSelectionPopup(null);
+        return;
+      }
+      const text = selection.toString().trim();
+      if (text.length < 3 || text.length > 2000) {
+        setSelectionPopup(null);
+        return;
+      }
+      // Only show if selection is inside our container
+      const anchor = selection.anchorNode;
+      if (!anchor || !containerRef.current?.contains(anchor)) {
+        setSelectionPopup(null);
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      setSelectionPopup({ text, x: rect.left + rect.width / 2, y: rect.top - 10 });
+    };
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => document.removeEventListener("selectionchange", handleSelectionChange);
+  }, []);
 
   // Prepare search tokens
   const searchTokens = useMemo(() => {
@@ -430,56 +579,63 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
   }, [matchIds]);
 
   // ── Citation highlighting ────────────────────────────────────
-  // Build a consecutive-word match: find the sequence of OCR words that
-  // matches the citation text (stripped of tashkeel).
+  // Multi-strategy matching: exact consecutive → tolerant (allow skips) → substring
   const citationMatchIds = useMemo(() => {
     if (!citationText || !ocrData?.pages?.length) return new Set<number>();
 
     const citNorm = stripTashkeel(citationText).toLowerCase().trim();
     if (!citNorm) return new Set<number>();
 
-    // Tokenize citation
+    // Tokenize citation into words
     const citTokens = citNorm.split(/\s+/).filter(Boolean);
     if (!citTokens.length) return new Set<number>();
 
-    const matched = new Set<number>();
+    // Build a flat array of all normalized words with their global indices
+    const allWords: { norm: string; globalIdx: number }[] = [];
     let globalIdx = 0;
-
     for (const page of ocrData.pages) {
-      const words = page.words;
-      for (let i = 0; i <= words.length - citTokens.length; i++) {
-        let ok = true;
-        for (let j = 0; j < citTokens.length; j++) {
-          const wordNorm = stripTashkeel(words[i + j].content).toLowerCase();
-          if (!wordNorm.includes(citTokens[j])) {
-            ok = false;
-            break;
-          }
-        }
-        if (ok) {
-          for (let j = 0; j < citTokens.length; j++) {
-            matched.add(globalIdx + i + j);
-          }
-          // Don't break — mark all occurrences, but first is enough for scroll
-        }
+      for (let i = 0; i < page.words.length; i++) {
+        allWords.push({
+          norm: stripTashkeel(page.words[i].content).toLowerCase(),
+          globalIdx: globalIdx + i,
+        });
       }
-      globalIdx += words.length;
+      globalIdx += page.words.length;
     }
 
-    return matched;
+    // Strategy 1: Exact consecutive match (current approach)
+    const exactMatch = findExactConsecutive(allWords, citTokens);
+    if (exactMatch.size > 0) return exactMatch;
+
+    // Strategy 2: Tolerant window — allow up to 20% token mismatches
+    const tolerantMatch = findTolerantWindow(allWords, citTokens);
+    if (tolerantMatch.size > 0) return tolerantMatch;
+
+    // Strategy 3: Sliding substring — join OCR words into text, find best overlap
+    const substringMatch = findSubstringMatch(allWords, citNorm);
+    if (substringMatch.size > 0) return substringMatch;
+
+    // Strategy 4: Key-phrase fallback — take distinctive words (length >= 3),
+    // find the densest cluster of matches
+    const keyPhraseMatch = findKeyPhraseCluster(allWords, citTokens);
+    return keyPhraseMatch;
   }, [citationText, ocrData]);
 
   // Auto-scroll to first citation match
   useEffect(() => {
-    if (!citationMatchIds.size || !containerRef.current) return;
+    if (!citationText) return;
+    if (!citationMatchIds.size) {
+      onCitationNotFound?.();
+      return;
+    }
+    if (!containerRef.current) return;
     const firstId = citationMatchIds.values().next().value;
-    // Small delay so DOM updates first
     const t = setTimeout(() => {
       const el = containerRef.current?.querySelector(`[data-global-id="${firstId}"]`);
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 100);
     return () => clearTimeout(t);
-  }, [citationMatchIds]);
+  }, [citationMatchIds, citationText, citationKey, onCitationNotFound]);
 
   // Fetch OCR data
   useEffect(() => {
@@ -706,6 +862,27 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
           />
         ))}
       </div>
+
+      {/* "Ask about this" selection popup */}
+      {selectionPopup && onAskAboutSelection && (
+        <button
+          className="fixed z-[70] flex items-center gap-1.5 rounded-lg bg-accent text-white px-3 py-1.5 text-xs font-arabic shadow-lg hover:bg-accent-hover active:scale-95 transition-all cursor-pointer"
+          style={{
+            left: selectionPopup.x,
+            top: selectionPopup.y,
+            transform: "translate(-50%, -100%)",
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault(); // prevent selection from clearing
+            onAskAboutSelection(selectionPopup.text);
+            setSelectionPopup(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+        >
+          <MessageSquareText size={13} />
+          اسأل عن هذا
+        </button>
+      )}
 
       {/* Scroll to top / bottom */}
       <div
