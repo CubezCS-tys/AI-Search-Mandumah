@@ -13,9 +13,8 @@ Reference: Gao et al. "Precise Zero-Shot Dense Retrieval without Relevance Label
 from __future__ import annotations
 
 import logging
-import os
 
-from openai import OpenAI
+from backend.services.openai_client import get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +41,13 @@ def generate_hypothesis(query: str, *, timeout: float = 8.0) -> str:
     Returns:
         The hypothesis text, or the original query if generation fails.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    try:
+        client = get_openai_client(timeout=timeout)
+    except RuntimeError:
         logger.warning("OPENAI_API_KEY not set — skipping HyDE, using raw query")
         return query
 
     try:
-        client = OpenAI(api_key=api_key, timeout=timeout)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[

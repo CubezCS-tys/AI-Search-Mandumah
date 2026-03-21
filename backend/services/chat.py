@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Generator
 
-from openai import OpenAI
+from backend.services.openai_client import get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -107,21 +106,6 @@ Document:
 """
 
 
-# ── Lazy OpenAI client ────────────────────────────────────────────────────
-
-_client: OpenAI | None = None
-
-
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY environment variable is not set")
-        _client = OpenAI(api_key=api_key)
-    return _client
-
-
 # ── Public API ────────────────────────────────────────────────────────────
 
 MULTI_DOC_SYSTEM_PROMPT = """\
@@ -175,7 +159,7 @@ def stream_chat(
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": message})
 
-    client = _get_client()
+    client = get_openai_client()
 
     try:
         stream = client.chat.completions.create(
@@ -232,7 +216,7 @@ def stream_chat_multi(
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": message})
 
-    client = _get_client()
+    client = get_openai_client()
 
     try:
         stream = client.chat.completions.create(
@@ -263,7 +247,7 @@ def analyze_document(document_text: str) -> str:
             + "\n\n[... تم اختصار المستند ...]"
         )
 
-    client = _get_client()
+    client = get_openai_client()
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",

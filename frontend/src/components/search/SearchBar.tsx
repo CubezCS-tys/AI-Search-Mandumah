@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Search, Sparkles, TextSearch, Binary } from "lucide-react";
+import { Search, Sparkles, TextSearch, CircleHelp } from "lucide-react";
 import type { SearchMode } from "@/types/search";
 
 const MODES: { value: SearchMode; label: string; icon: React.ReactNode }[] = [
@@ -17,20 +17,24 @@ interface SearchBarProps {
   initialQuery?: string;
   /** Pre-selected mode. */
   initialMode?: SearchMode;
+  /** Initial HyDE toggle state. */
+  initialHyde?: boolean;
   /** If true, renders the compact top-bar variant. */
   variant?: "hero" | "compact";
   /** Callback instead of navigation (for results page live-search). */
-  onSearch?: (query: string, mode: SearchMode) => void;
+  onSearch?: (query: string, mode: SearchMode, hyde: boolean) => void;
 }
 
 export default function SearchBar({
   initialQuery = "",
   initialMode = "hybrid",
+  initialHyde = false,
   variant = "hero",
   onSearch,
 }: SearchBarProps) {
   const [query, setQuery] = useState(initialQuery);
   const [mode, setMode] = useState<SearchMode>(initialMode);
+  const [hyde, setHyde] = useState(initialHyde);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
@@ -57,9 +61,10 @@ export default function SearchBar({
     if (!trimmed) return;
 
     if (onSearch) {
-      onSearch(trimmed, mode);
+      onSearch(trimmed, mode, hyde);
     } else {
       const params = new URLSearchParams({ q: trimmed, mode });
+      if (hyde) params.set("hyde", "1");
       router.push(`/search?${params.toString()}`);
     }
   }
@@ -128,7 +133,7 @@ export default function SearchBar({
       </div>
 
       {/* Mode selector */}
-      <div className={`flex items-center gap-1 mt-3 ${isHero ? "justify-center" : ""}`}>
+      <div className={`mt-3 flex flex-wrap items-center gap-1.5 ${isHero ? "justify-center" : ""}`}>
         {MODES.map((m) => (
           <button
             key={m.value}
@@ -153,6 +158,44 @@ export default function SearchBar({
             </span>
           </button>
         ))}
+
+        <div
+          className={`
+            ms-1 flex items-center gap-2 rounded-full border px-2 py-1
+            ${hyde
+              ? "border-accent/25 bg-accent/[0.08]"
+              : "border-border-subtle bg-bg-secondary/80"
+            }
+          `}
+        >
+          <button
+            type="button"
+            onClick={() => setHyde((current) => !current)}
+            className={`
+              rounded-full px-3 py-1 text-[12px] font-medium transition-colors
+              ${hyde
+                ? "bg-accent text-white shadow-sm"
+                : "text-text-muted hover:text-text-secondary"
+              }
+            `}
+            aria-pressed={hyde}
+          >
+            HyDE
+          </button>
+
+          <div className="relative flex items-center group">
+            <button
+              type="button"
+              className="text-text-muted transition-colors hover:text-text-secondary"
+              aria-label="ما هو HyDE؟"
+            >
+              <CircleHelp size={14} />
+            </button>
+            <div className="pointer-events-none absolute start-1/2 top-full z-20 mt-2 w-64 -translate-x-1/2 rounded-xl border border-border-subtle bg-bg-elevated px-3 py-2 text-right text-[11px] leading-5 text-text-muted opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              يولد HyDE فقرة بحثية افتراضية من استعلامك قبل البحث لزيادة الاستدعاء في الموضوعات العامة. فعّله عندما تكون النتائج قليلة أو ضيقة، وأوقفه عندما تريد نتائج أكثر حرفية.
+            </div>
+          </div>
+        </div>
       </div>
     </form>
   );

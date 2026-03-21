@@ -17,11 +17,39 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Sequence
 
 logger = logging.getLogger(__name__)
+
+_ARABIC_NORMALIZE_TABLE = str.maketrans({
+    "أ": "ا",
+    "إ": "ا",
+    "آ": "ا",
+    "ى": "ي",
+    "ؤ": "و",
+    "ئ": "ي",
+    "ة": "ه",
+    "_": " ",
+})
+_ARABIC_DIACRITICS_RE = re.compile(r"[\u064B-\u065F\u0670\u06D6-\u06ED]")
+_TOKEN_RE = re.compile(r"[A-Za-z0-9\u0600-\u06FF]+")
+_AUTHORISH_TITLE_RE = re.compile(
+    r"(^|\s)(?:أ\s*\.?\s*د|د\s*\.?|أ\s*\.?\s*م|م\s*\.?\s*م|الدكتور|الدكتوره|الدكتوراه|"
+    r"الأستاذ|الاستاذ|الأستاذه|الاستاذه|prof\.?|dr\.?|by|اعداد|إعداد|بقلم)(\s|$)|"
+    r"جامعة\s.+كلية|كلية\s.+قسم|قسم\s.+كلية|@|\.edu\.|\.ac\.|\.org$|\.com$",
+    re.IGNORECASE,
+)
+_STOPWORDS = {
+    "في", "من", "على", "الى", "إلى", "عن", "مع", "بين", "هذا", "هذه", "ذلك", "تلك",
+    "وقد", "كما", "كما", "الى", "أن", "إن", "او", "أو", "ثم", "بعد", "قبل", "لدى",
+    "لها", "لهم", "عند", "حول", "ضمن", "كان", "كانت", "يكون", "تكون", "تم", "قد",
+    "the", "and", "for", "with", "from", "into", "that", "this",
+}
 
 
 @dataclass
@@ -36,6 +64,9 @@ class SearchResult:
     chunk_index: int
     journal_id: str
     char_len: int
+    raw_score: float = 0.0
+    lexical_score: float = 0.0
+    title_score: float = 0.0
 
 
 class Searcher:
@@ -122,8 +153,9 @@ class Searcher:
 
         search_ms = (time.time() - t0) * 1000
         logger.debug("Search returned %d results in %.0fms (mode=%s)", len(points), search_ms, mode)
-
-        return [self._point_to_result(p) for p in points]
+        results = [self._point_to_result(p) for p in points]
+        reranked = self._rerank_results(query, results)
+        return self._filter_low_confidence_candidates(reranked)
 
     def _hybrid_search(self, emb, top_k, prefetch_k, query_filter):
         """Dense + sparse with RRF fusion."""
@@ -226,6 +258,7 @@ class Searcher:
         mode: str = "hybrid",
         journal_id: str | None = None,
         section: str | None = None,
+        doc_id: str | None = None,
         prefetch_limit: int | None = None,
     ) -> list[SearchResult]:
         """Search using Hypothetical Document Embeddings (HyDE).
@@ -243,22 +276,172 @@ class Searcher:
             mode=mode,
             journal_id=journal_id,
             section=section,
+            doc_id=doc_id,
             prefetch_limit=prefetch_limit,
         )
+
+    def get_chunks_by_ids(self, chunk_ids: Sequence[str]) -> list[SearchResult]:
+        """Fetch canonical chunks by their chunk IDs from Qdrant."""
+        if not chunk_ids:
+            return []
+
+        point_ids = [hashlib.md5(chunk_id.encode()).hexdigest() for chunk_id in chunk_ids]
+        points = self.client.retrieve(
+            collection_name=self.collection_name,
+            ids=point_ids,
+            with_payload=True,
+        )
+        by_id = {str(point.id): point for point in points}
+        ordered = [by_id[pid] for pid in point_ids if pid in by_id]
+        return [self._point_to_result(p) for p in ordered]
+
+    def _rerank_results(
+        self,
+        query: str,
+        results: Sequence[SearchResult],
+    ) -> list[SearchResult]:
+        if not results:
+            return []
+
+        query_tokens = self._tokenize(query)
+        query_token_set = set(query_tokens)
+        query_bigrams = self._bigrams(query_tokens)
+        query_norm = self._normalize_text(query)
+        raw_scores = [r.raw_score for r in results]
+        raw_min = min(raw_scores)
+        raw_max = max(raw_scores)
+        total = len(results)
+
+        reranked: list[SearchResult] = []
+        for rank, result in enumerate(results):
+            title_token_list = self._tokenize(result.title)
+            section_token_list = self._tokenize(result.section)
+            body_token_list = self._tokenize(result.text[:1800])
+            title_tokens = set(title_token_list)
+            section_tokens = set(section_token_list)
+            body_tokens = set(body_token_list)
+            text_bigrams = self._bigrams(title_token_list[:24] + body_token_list[:48])
+
+            title_coverage = self._coverage(query_token_set, title_tokens)
+            body_coverage = self._coverage(query_token_set, body_tokens)
+            section_coverage = self._coverage(query_token_set, section_tokens)
+            bigram_coverage = self._coverage(query_bigrams, text_bigrams)
+            source_norm = self._normalize_text(f"{result.title} {result.section} {result.text[:1800]}")
+
+            phrase_bonus = 0.12 if query_norm and query_norm in source_norm else 0.0
+            title_phrase_bonus = 0.08 if query_norm and query_norm in self._normalize_text(result.title) else 0.0
+            lexical = min(
+                1.0,
+                (0.55 * title_coverage)
+                + (0.25 * body_coverage)
+                + (0.10 * section_coverage)
+                + (0.10 * bigram_coverage)
+                + phrase_bonus
+                + title_phrase_bonus,
+            )
+
+            raw_norm = self._normalize_score(result.raw_score, raw_min, raw_max)
+            rank_prior = 1.0 - (rank / max(total - 1, 1)) if total > 1 else 1.0
+            suspicious_penalty = 0.14 if self._looks_like_authorish_title(result.title) else 0.0
+
+            if lexical < 0.08 and title_coverage == 0.0 and body_coverage < 0.08:
+                raw_norm *= 0.72
+                rank_prior *= 0.72
+
+            final_score = max(
+                0.0,
+                min(
+                    1.0,
+                    (0.45 * raw_norm)
+                    + (0.25 * rank_prior)
+                    + (0.30 * lexical)
+                    - suspicious_penalty,
+                ),
+            )
+            reranked.append(
+                replace(
+                    result,
+                    score=round(final_score, 4),
+                    lexical_score=round(lexical, 4),
+                    title_score=round(title_coverage, 4),
+                )
+            )
+
+        reranked.sort(key=lambda item: item.score, reverse=True)
+        return reranked
+
+    def _filter_low_confidence_candidates(
+        self,
+        results: Sequence[SearchResult],
+    ) -> list[SearchResult]:
+        if not results:
+            return []
+
+        best_score = results[0].score
+        keep_floor = max(0.2, best_score * 0.42)
+        kept: list[SearchResult] = []
+        for idx, result in enumerate(results):
+            anchor = max(result.lexical_score, result.title_score)
+            if idx == 0 or result.score >= keep_floor or anchor >= 0.24:
+                kept.append(result)
+
+        if not kept:
+            return list(results[:1])
+
+        return kept
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        normalized = _ARABIC_DIACRITICS_RE.sub("", (text or "").translate(_ARABIC_NORMALIZE_TABLE))
+        normalized = normalized.lower()
+        return " ".join(_TOKEN_RE.findall(normalized))
+
+    @classmethod
+    def _tokenize(cls, text: str) -> list[str]:
+        return [
+            token
+            for token in cls._normalize_text(text).split()
+            if len(token) > 1 and token not in _STOPWORDS
+        ]
+
+    @staticmethod
+    def _bigrams(tokens: Sequence[str]) -> set[str]:
+        return {" ".join(tokens[i : i + 2]) for i in range(len(tokens) - 1)}
+
+    @staticmethod
+    def _coverage(query_terms: set[str], source_terms: set[str]) -> float:
+        if not query_terms or not source_terms:
+            return 0.0
+        return len(query_terms & source_terms) / len(query_terms)
+
+    @staticmethod
+    def _normalize_score(value: float, min_value: float, max_value: float) -> float:
+        if max_value <= min_value:
+            return 1.0
+        return (value - min_value) / (max_value - min_value)
+
+    @staticmethod
+    def _looks_like_authorish_title(title: str) -> bool:
+        stripped = (title or "").strip()
+        if not stripped:
+            return False
+        return bool(_AUTHORISH_TITLE_RE.search(stripped))
 
     def _point_to_result(self, point) -> SearchResult:
         """Convert a Qdrant point to a SearchResult."""
         p = point.payload or {}
+        raw_score = point.score if point.score is not None else 0.0
         return SearchResult(
             chunk_id=p.get("chunk_id", ""),
             doc_id=p.get("doc_id", ""),
             text=p.get("text", ""),
             title=p.get("title", ""),
             section=p.get("section", ""),
-            score=point.score if point.score is not None else 0.0,
+            score=raw_score,
             chunk_index=p.get("chunk_index", 0),
             journal_id=p.get("journal_id", ""),
             char_len=p.get("char_len", 0),
+            raw_score=raw_score,
         )
 
 

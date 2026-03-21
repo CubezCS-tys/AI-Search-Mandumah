@@ -39,7 +39,7 @@ import fitz  # PyMuPDF
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class SearchRequest(BaseModel):
     section: str | None = None
     doc_id: str | None = None
     deduplicate: bool = True  # keep only the top chunk per document
-    hyde: bool = True  # use Hypothetical Document Embeddings for better recall
+    hyde: bool = False  # opt-in HyDE expansion for broader recall
 
 
 class SearchResultItem(BaseModel):
@@ -126,6 +126,8 @@ class SearchResponse(BaseModel):
     results: list[SearchResultItem]
     total: int
     search_ms: float
+    low_confidence: bool = False
+    warning: str | None = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
@@ -223,6 +225,21 @@ async def search(req: SearchRequest):
                 seen[r.doc_id] = r
         results = list(seen.values())[:req.top_k]
 
+    if results:
+        top_score = results[0].score
+        top_window = results[: min(3, len(results))]
+        avg_lexical = sum(getattr(r, "lexical_score", 0.0) for r in top_window) / len(top_window)
+        low_confidence = top_score < 0.34 or avg_lexical < 0.14
+    else:
+        low_confidence = True
+
+    warning = None
+    if low_confidence:
+        warning = (
+            "هذه النتائج أولية وقد تحتوي على تطابقات موضوعية عامة. "
+            "جرّب إيقاف HyDE أو تضييق الاستعلام أو استخدام كلمات أكثر تحديداً."
+        )
+
     return SearchResponse(
         query=req.query,
         mode=req.mode,
@@ -242,6 +259,8 @@ async def search(req: SearchRequest):
         ],
         total=len(results),
         search_ms=search_ms,
+        low_confidence=low_confidence,
+        warning=warning,
     )
 
 
@@ -251,29 +270,52 @@ async def search(req: SearchRequest):
 class SynthesisRequest(BaseModel):
     query: str = Field(..., max_length=2000)
     results: list[SearchResultItem] = Field(..., min_length=1, max_length=20)
+    mode: Literal["fast", "advanced"] = "fast"
+    max_documents: int = Field(default=5, ge=1, le=10)
+    chunks_per_document: int = Field(default=4, ge=1, le=8)
+    use_hyde: bool = False
+    search_mode: Literal["hybrid", "dense", "sparse"] = "hybrid"
+    journal_id: str | None = None
+    section: str | None = None
+    doc_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_fields(cls, data):
+        """Accept the older frontend naming while the UI catches up."""
+        if not isinstance(data, dict):
+            return data
+
+        payload = dict(data)
+        if "mode" not in payload and "synthesis_mode" in payload:
+            payload["mode"] = "advanced" if payload["synthesis_mode"] == "advanced" else "fast"
+        return payload
 
 
 @app.post("/api/search/synthesize")
 async def synthesize(req: SynthesisRequest):
-    """Stream a cross-document synthesis grounded in the provided search results."""
+    """Stream a cross-document synthesis grounded in canonical search results."""
     if not req.query.strip():
         raise HTTPException(400, "Query cannot be empty")
 
+    searcher = get_searcher()
+
     from backend.services.synthesis import stream_synthesis
 
-    chunks = [
-        {
-            "doc_id": r.doc_id,
-            "title": r.title,
-            "section": r.section,
-            "text": r.text,
-            "score": r.score,
-        }
-        for r in req.results
-    ]
-
     return StreamingResponse(
-        stream_synthesis(req.query, chunks),
+        stream_synthesis(
+            searcher,
+            req.query,
+            [r.model_dump() for r in req.results],
+            mode=req.mode,
+            max_documents=req.max_documents,
+            chunks_per_document=req.chunks_per_document,
+            use_hyde=req.use_hyde,
+            search_mode=req.search_mode,
+            journal_id=req.journal_id,
+            section=req.section,
+            doc_id=req.doc_id,
+        ),
         media_type="text/event-stream",
     )
 

@@ -22,10 +22,11 @@ export default function Home() {
   const router = useRouter();
   const [phase, setPhase] = useState<AnimPhase>("idle");
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
+  const [searchHyde, setSearchHyde] = useState(false);
 
   const searchQueryRef = useRef("");
   const searchModeRef = useRef<SearchMode>("hybrid");
+  const searchHydeRef = useRef(false);
   const pendingScoresRef = useRef<number[]>([]);
   const [previewResults, setPreviewResults] = useState<SearchResultItem[]>([]);
 
@@ -56,16 +57,18 @@ export default function Home() {
         q: searchQueryRef.current,
         mode: searchModeRef.current,
       });
+      if (searchHydeRef.current) params.set("hyde", "1");
       router.push(`/search?${params.toString()}`);
     }, 2500);
   }, [router]);
 
   const handleSearch = useCallback(
-    (query: string, mode: SearchMode) => {
+    (query: string, mode: SearchMode, hyde: boolean) => {
       setSearchQuery(query);
-      setSearchMode(mode);
+      setSearchHyde(hyde);
       searchQueryRef.current = query;
       searchModeRef.current = mode;
+      searchHydeRef.current = hyde;
       pendingScoresRef.current = [];
       setPreviewResults([]);
       apiDoneRef.current = false;
@@ -73,11 +76,11 @@ export default function Home() {
       searchingRef.current = false;
       setPhase("embedding");
 
-      search({ query, mode, top_k: 20 })
+      search({ query, mode, top_k: 20, hyde })
         .then(res => {
           pendingScoresRef.current = res.results.map(r => r.score);
           setPreviewResults(res.results.slice(0, 5));
-          setPrefetchedSearch({ query, mode, top_k: 20 }, res);
+          setPrefetchedSearch({ query, mode, top_k: 20, hyde }, res);
           apiDoneRef.current = true;
           maybeRealSearch();
           return res;
@@ -189,7 +192,7 @@ export default function Home() {
               </div>
               <div className="h-3 w-px bg-border" />
               <div className="flex items-center gap-2 text-xs text-text-muted">
-                <span className="font-arabic">بحث هجين</span>
+                <span className="font-arabic">{searchHyde ? "HyDE مفعل" : "HyDE اختياري"}</span>
               </div>
             </div>
           </motion.div>

@@ -1,4 +1,9 @@
-import type { SearchRequest, SearchResponse, HealthResponse, SearchResultItem } from "@/types/search";
+import type {
+  HealthResponse,
+  SearchRequest,
+  SearchResponse,
+  SynthesisRequest,
+} from "@/types/search";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -23,8 +28,7 @@ export async function healthCheck(): Promise<HealthResponse> {
 }
 
 export async function streamSynthesis(
-  query: string,
-  results: SearchResultItem[],
+  request: SynthesisRequest,
   onToken: (token: string) => void,
   onDone: () => void,
   onError: (msg: string) => void,
@@ -33,7 +37,7 @@ export async function streamSynthesis(
   const res = await fetch(`${API_BASE}/api/search/synthesize`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, results }),
+    body: JSON.stringify(request),
     signal,
   });
 
@@ -46,21 +50,49 @@ export async function streamSynthesis(
   const reader = res.body?.getReader();
   if (!reader) { onError("No response body"); return; }
   const decoder = new TextDecoder();
+  let buffer = "";
+  let completed = false;
+
+  const handleLine = (line: string) => {
+    if (!line.startsWith("data: ")) return;
+    const payload = line.slice(6).trim();
+    if (payload === "[DONE]") {
+      completed = true;
+      onDone();
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(payload);
+      if (parsed.token) onToken(parsed.token);
+      else if (parsed.error) {
+        completed = true;
+        onError(parsed.error);
+      }
+    } catch {
+      onError("Malformed synthesis stream");
+      completed = true;
+    }
+  };
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    const lines = decoder.decode(value, { stream: true }).split("\n");
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const payload = line.slice(6).trim();
-      if (payload === "[DONE]") { onDone(); return; }
-      try {
-        const parsed = JSON.parse(payload);
-        if (parsed.token) onToken(parsed.token);
-        else if (parsed.error) { onError(parsed.error); return; }
-      } catch { /* incomplete chunk */ }
+    buffer += decoder.decode(value, { stream: true });
+
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex).replace(/\r$/, "");
+      buffer = buffer.slice(newlineIndex + 1);
+      handleLine(line);
+      if (completed) return;
+      newlineIndex = buffer.indexOf("\n");
     }
   }
-  onDone();
+
+  buffer += decoder.decode();
+  if (buffer) {
+    handleLine(buffer.replace(/\r$/, ""));
+  }
+  if (!completed) onDone();
 }

@@ -117,8 +117,11 @@ def _is_boilerplate(line: str) -> bool:
 
 
 _AUTHOR_LINE_RE = re.compile(
-    r"(أ\.د|د\.|م\.م|أ\.م|Prof\.|Dr\.|@|جامعة\s.+كلية|كلية\s.+قسم"
-    r"|\.edu\.|\.ac\.|\.com$|\.org$)",
+    r"(^|\s)(?:أ\s*\.?\s*د|د\s*\.?|دكتور(?:ة)?\.?|أ\s*\.?\s*م|م\s*\.?\s*م|"
+    r"الدكتور|الدكتورة|الأستاذ|الاستاذ|الأستاذة|الاستاذة|"
+    r"Prof\.?|Dr\.?|By|بقلم|إعداد|اعداد)(\s|$)|"
+    r"@|جامعة\s.+كلية|كلية\s.+قسم|قسم\s.+كلية|"
+    r"\.edu\.|\.ac\.|\.com$|\.org$",
     re.IGNORECASE,
 )
 
@@ -129,8 +132,8 @@ def _is_author_line(line: str) -> bool:
 
 def _extract_title(lines: list[str]) -> str:
     """Extract the document title from the first few meaningful lines."""
-    candidates = []
-    for line in lines[:15]:
+    candidates: list[tuple[float, int, str]] = []
+    for idx, line in enumerate(lines[:20]):
         stripped = line.strip()
         if not stripped:
             continue
@@ -145,14 +148,24 @@ def _extract_title(lines: list[str]) -> str:
         # Skip very short lines (dates, issue numbers)
         if len(stripped) < 10:
             continue
-        candidates.append(stripped)
-        if len(candidates) >= 3:
-            break
+        score = 0.0
+        if idx < 5:
+            score += 1.2
+        if 20 <= len(stripped) <= 140:
+            score += 1.4
+        elif 12 <= len(stripped) <= 180:
+            score += 0.8
+        if 4 <= len(stripped.split()) <= 18:
+            score += 0.6
+        if stripped.endswith((".", ":", "؛", "،")):
+            score -= 0.4
+        if any(ch.isdigit() for ch in stripped):
+            score -= 0.25
+        candidates.append((score, idx, stripped))
 
     if candidates:
-        # The title is typically the first long meaningful line
-        # (not the longest, which could be a subtitle or abstract start)
-        return candidates[0]
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        return candidates[0][2]
     return ""
 
 
