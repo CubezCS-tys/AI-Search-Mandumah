@@ -29,4 +29,4 @@ See `.github/copilot-instructions.md` for the autonomy + verification contract.
 
 - [x] Citation accuracy eval harness (extend `eval/`).
 - [x] Keyboard shortcuts (new chat, focus search, send).
-- [ ] Dark mode.
+- [x] Dark mode.

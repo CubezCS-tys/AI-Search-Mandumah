@@ -25,6 +25,29 @@
   --radius-lg: 20px;
 }
 
+/* Dark theme — toggled by adding `.dark` on <html>. Overrides the same tokens
+   so every token-based component adapts automatically. The burgundy accent is
+   lightened slightly to keep adequate contrast on dark surfaces. */
+.dark {
+  --bg-primary: #14141b;
+  --bg-secondary: #1c1c26;
+  --bg-elevated: #22222e;
+  --text-primary: #ececf1;
+  --text-secondary: #b8b9c6;
+  --text-muted: #8a8b9c;
+  --border: #34343f;
+  --border-subtle: #2a2a34;
+  --accent: #d6536a;
+  --accent-hover: #e06b80;
+  --accent-subtle: #2a1a20;
+  --highlight: #3a2129;
+  --highlight-text: #f0c3cc;
+  --surface-glass: rgba(20, 20, 27, 0.80);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.40), 0 1px 3px rgba(0, 0, 0, 0.30);
+  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
 @theme inline {
   --color-bg-primary: var(--bg-primary);
   --color-bg-secondary: var(--bg-secondary);
@@ -115,6 +138,12 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #888;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #3f3f4b;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #55556a;
 }
 
 /* ── Document viewer ─────────────────────────────────────────── */

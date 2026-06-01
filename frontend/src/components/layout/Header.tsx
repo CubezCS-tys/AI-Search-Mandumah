@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Search, MessageSquare } from "lucide-react";
 import HealthIndicator from "./HealthIndicator";
+import ThemeToggle from "./ThemeToggle";
 
 export default function Header({ compact = false }: { compact?: boolean }) {
   const pathname = usePathname();
@@ -33,7 +34,7 @@ export default function Header({ compact = false }: { compact?: boolean }) {
   }, [router]);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border/50 bg-white/80 backdrop-blur-xl">
+    <header className="sticky top-0 z-40 border-b border-border/50 glass">
       <div className="mx-auto flex h-13 max-w-5xl items-center justify-between px-5">
         <Link href="/" className="flex items-center gap-1.5 group">
           <Image
@@ -71,8 +72,9 @@ export default function Header({ compact = false }: { compact?: boolean }) {
           </Link>
         </nav>
 
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex items-center gap-2.5 text-sm">
           <HealthIndicator />
+          <ThemeToggle />
           <span className="rounded-md bg-accent/[0.07] px-2 py-0.5 text-[11px] font-semibold text-accent tracking-wide uppercase">
             Beta
           </span>
