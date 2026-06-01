@@ -11,6 +11,7 @@ import NetworkBackground, {
 } from "@/components/network/NetworkBackground";
 import SonarPulseAnimation from "@/components/network/SonarPulseAnimation";
 import SearchPreview from "@/components/network/SearchPreview";
+import ThemeToggle from "@/components/layout/ThemeToggle";
 import { search } from "@/lib/api";
 import { setPrefetchedSearch } from "@/lib/hooks/useSearch";
 import type { SearchMode } from "@/types/search";
@@ -108,6 +109,11 @@ export default function Home() {
   return (
     <div className="relative flex min-h-svh flex-col items-center justify-center px-6 overflow-hidden">
       <NetworkBackground ref={networkRef} />
+
+      {/* Theme toggle — floating top corner (no header on the landing page) */}
+      <div className="fixed top-4 left-4 z-30">
+        <ThemeToggle />
+      </div>
 
       {/* Vignette overlay */}
       <div
