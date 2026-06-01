@@ -16,6 +16,10 @@ import {
   ChevronsUp,
   ChevronsDown,
   MessageSquareText,
+  Search,
+  X,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -230,12 +234,16 @@ function PageView({
   citationMatchIds,
   globalWordOffset,
   pageIndex,
+  findMatchIds,
+  activeFindIds,
 }: {
   page: OcrPage;
   docId: string;
   citationMatchIds: Set<number>;
   globalWordOffset: number;
   pageIndex: number;
+  findMatchIds: Set<number>;
+  activeFindIds: Set<number>;
 }) {
   // Use actual raster dimensions for precise alignment
   const scaleX = page.rasterWidth > 0 ? page.rasterWidth / page.width : 200;
@@ -438,6 +446,37 @@ function PageView({
             />
           );
         })}
+        {/* Find-in-document highlights — per-word amber rects, active match brighter */}
+        {(findMatchIds.size > 0) && page.words.map((word, i) => {
+          if (word.polygon.length < 8) return null;
+          const gid = globalWordOffset + i;
+          if (!findMatchIds.has(gid)) return null;
+          const isActive = activeFindIds.has(gid);
+          const rect = polygonToRect(word.polygon, scaleX, scaleY);
+          if (rect.width < 1 || rect.height < 1) return null;
+          return (
+            <div
+              key={`find-${i}`}
+              {...(isActive ? { "data-find-active": "1" } : {})}
+              style={{
+                position: "absolute",
+                left: rect.left - 1.5,
+                top: rect.top - 1.5,
+                width: rect.width + 3,
+                height: rect.height + 3,
+                borderRadius: 3,
+                pointerEvents: "none",
+                background: isActive
+                  ? "rgba(245,158,11,0.55)"
+                  : "rgba(250,204,21,0.32)",
+                border: isActive
+                  ? "1.5px solid rgba(217,119,6,0.9)"
+                  : "1px solid rgba(202,138,4,0.45)",
+                boxShadow: isActive ? "0 1px 6px rgba(217,119,6,0.35)" : "none",
+              }}
+            />
+          );
+        })}
       </div>
 
       {/* Text selection layer – line-based spans for clean multi-line select & copy */}
@@ -575,6 +614,97 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
     }
     return offsets;
   }, [ocrData]);
+
+  // ── Find in document ─────────────────────────────────────────
+  const [findOpen, setFindOpen] = useState(false);
+  const [findTerm, setFindTerm] = useState("");
+  const [activeMatch, setActiveMatch] = useState(0);
+  const findInputRef = useRef<HTMLInputElement>(null);
+
+  // Flat list of all normalized words with their global indices.
+  const allFindWords = useMemo(() => {
+    if (!ocrData?.pages?.length) return [] as FlatWord[];
+    const words: FlatWord[] = [];
+    let globalIdx = 0;
+    for (const page of ocrData.pages) {
+      for (let i = 0; i < page.words.length; i++) {
+        words.push({ norm: normalizeWord(page.words[i].content), globalIdx: globalIdx + i });
+      }
+      globalIdx += page.words.length;
+    }
+    return words;
+  }, [ocrData]);
+
+  // Every occurrence of the find term, as groups of global word indices.
+  const findGroups = useMemo(() => {
+    const term = stripTashkeel(findTerm).toLowerCase().trim();
+    if (!term || allFindWords.length === 0) return [] as number[][];
+    const tokens = term.split(/\s+/).map((t) => stripPunctuation(t)).filter(Boolean);
+    if (!tokens.length) return [];
+    const groups: number[][] = [];
+    for (let i = 0; i <= allFindWords.length - tokens.length; i++) {
+      let ok = true;
+      for (let j = 0; j < tokens.length; j++) {
+        // Token matches if the OCR word contains it (handles attached affixes).
+        if (!allFindWords[i + j].norm.includes(tokens[j])) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        groups.push(allFindWords.slice(i, i + tokens.length).map((w) => w.globalIdx));
+        i += tokens.length - 1; // don't overlap matches
+      }
+    }
+    return groups;
+  }, [findTerm, allFindWords]);
+
+  const findMatchIds = useMemo(() => {
+    const s = new Set<number>();
+    for (const g of findGroups) for (const id of g) s.add(id);
+    return s;
+  }, [findGroups]);
+
+  const activeFindIds = useMemo(() => {
+    const g = findGroups[activeMatch];
+    return g ? new Set<number>(g) : new Set<number>();
+  }, [findGroups, activeMatch]);
+
+  // Scroll the active match into view.
+  useEffect(() => {
+    if (!findOpen || findGroups.length === 0) return;
+    const t = setTimeout(() => {
+      const el = containerRef.current?.querySelector("[data-find-active]");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [findOpen, activeMatch, findGroups]);
+
+  const gotoMatch = useCallback(
+    (dir: 1 | -1) => {
+      setActiveMatch((m) => {
+        const n = findGroups.length;
+        if (n === 0) return 0;
+        return (m + dir + n) % n;
+      });
+    },
+    [findGroups.length],
+  );
+
+  // Ctrl/Cmd+F opens the find box; Esc closes it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+        requestAnimationFrame(() => findInputRef.current?.focus());
+      } else if (e.key === "Escape" && findOpen) {
+        setFindOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [findOpen]);
 
   // ── Citation highlighting ────────────────────────────────────
   // Multi-strategy matching: exact consecutive → tolerant (allow skips) → substring
@@ -771,6 +901,23 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
           {/* Separator */}
           <div className="h-4 w-px bg-border-subtle" />
 
+          {/* Find in document */}
+          <button
+            onClick={() => {
+              setFindOpen((v) => !v);
+              requestAnimationFrame(() => findInputRef.current?.focus());
+            }}
+            className={findOpen ? `${btnBase} border-accent/40 bg-accent-subtle text-accent` : btnNormal}
+            title="بحث في المستند (Ctrl+F)"
+            aria-label="بحث في المستند"
+            aria-pressed={findOpen}
+          >
+            <Search size={13} />
+          </button>
+
+          {/* Separator */}
+          <div className="h-4 w-px bg-border-subtle" />
+
           {/* Download */}
           <a
             href={`/api/pdf/${docId}`}
@@ -787,6 +934,61 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
             {ocrData.pages.length} page{ocrData.pages.length !== 1 ? "s" : ""}
           </span>
         </div>
+
+        {/* Find bar */}
+        {findOpen && (
+          <div className="border-t border-border/50 bg-white/95">
+            <div className="mx-auto flex h-10 max-w-5xl items-center gap-2 px-5">
+              <Search size={14} className="text-text-muted shrink-0" />
+              <input
+                ref={findInputRef}
+                value={findTerm}
+                onChange={(e) => {
+                  setFindTerm(e.target.value);
+                  setActiveMatch(0);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    gotoMatch(e.shiftKey ? -1 : 1);
+                  }
+                }}
+                placeholder="بحث في المستند…"
+                dir="auto"
+                className="flex-1 bg-transparent font-arabic text-sm text-text-primary outline-none placeholder:text-text-muted"
+              />
+              <span className="min-w-[64px] text-center text-xs text-text-muted tabular-nums" dir="ltr">
+                {findGroups.length > 0 ? `${activeMatch + 1} / ${findGroups.length}` : findTerm ? "0 / 0" : ""}
+              </span>
+              <button
+                onClick={() => gotoMatch(-1)}
+                disabled={findGroups.length === 0}
+                className={`${btnNormal} disabled:opacity-40 disabled:cursor-default`}
+                title="السابق"
+                aria-label="النتيجة السابقة"
+              >
+                <ChevronUp size={13} />
+              </button>
+              <button
+                onClick={() => gotoMatch(1)}
+                disabled={findGroups.length === 0}
+                className={`${btnNormal} disabled:opacity-40 disabled:cursor-default`}
+                title="التالي"
+                aria-label="النتيجة التالية"
+              >
+                <ChevronDown size={13} />
+              </button>
+              <button
+                onClick={() => setFindOpen(false)}
+                className={btnNormal}
+                title="إغلاق"
+                aria-label="إغلاق البحث"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Pages container */}
@@ -858,6 +1060,8 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
             citationMatchIds={citationMatchIds}
             globalWordOffset={pageWordOffsets[i] ?? 0}
             pageIndex={i}
+            findMatchIds={findMatchIds}
+            activeFindIds={activeFindIds}
           />
         ))}
       </div>
