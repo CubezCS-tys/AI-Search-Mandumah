@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { Search, MessageSquare } from "lucide-react";
+import HealthIndicator from "./HealthIndicator";
 
 export default function Header({ compact = false }: { compact?: boolean }) {
   const pathname = usePathname();
@@ -50,6 +51,7 @@ export default function Header({ compact = false }: { compact?: boolean }) {
         </nav>
 
         <div className="flex items-center gap-3 text-sm">
+          <HealthIndicator />
           <span className="rounded-md bg-accent/[0.07] px-2 py-0.5 text-[11px] font-semibold text-accent tracking-wide uppercase">
             Beta
           </span>

@@ -22,7 +22,7 @@ See `.github/copilot-instructions.md` for the autonomy + verification contract.
 
 - [ ] Per-user session/cookie scoping for conversation history (see deferred work).
 - [x] Rate limiting + request size guards on chat/synthesis endpoints.
-- [ ] Health/readiness endpoints surfaced in the UI; graceful degraded states.
+- [x] Health/readiness endpoints surfaced in the UI; graceful degraded states.
 - [ ] Deployment: ensure rsync excludes `storage/conversations.db*`.
 
 ## Icebox
