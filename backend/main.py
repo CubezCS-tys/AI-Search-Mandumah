@@ -665,11 +665,18 @@ async def analyze(doc_id: str):
 # ── Corpus-wide chat (multi-turn, retrieval across the whole collection) ──
 
 _CORPUS_HISTORY_LIMIT = 20
+# Default chunks retrieved per turn; "more sources" raises this client-side.
+_CORPUS_RETRIEVE_TOP_K = 10
 
 
 class CorpusChatRequest(BaseModel):
     conversation_id: str | None = None
     message: str = Field(..., max_length=10_000)
+    # "Regenerate": re-answer the last user turn in place (drops the stale
+    # assistant answer) instead of appending a new exchange.
+    regenerate: bool = False
+    # "More sources": retrieve more chunks for a broader answer.
+    retrieve_top_k: int | None = Field(default=None, ge=1, le=40)
 
 
 @app.post("/api/chat/corpus")
@@ -701,8 +708,18 @@ async def chat_corpus(req: CorpusChatRequest):
             if m["role"] in ("user", "assistant")
         ][-_CORPUS_HISTORY_LIMIT:]
 
-    # Persist the user message before streaming.
-    await asyncio.to_thread(store.add_message, conversation_id, "user", message)
+    if req.regenerate and conv is not None:
+        # Re-answer the existing last user turn: drop the stale assistant reply
+        # and the trailing user turn from history (it becomes the live message),
+        # and do NOT persist a duplicate user message.
+        await asyncio.to_thread(store.delete_last_assistant_message, conversation_id)
+        if history and history[-1]["role"] == "assistant":
+            history.pop()
+        if history and history[-1]["role"] == "user":
+            history.pop()
+    else:
+        # Persist the user message before streaming.
+        await asyncio.to_thread(store.add_message, conversation_id, "user", message)
 
     searcher = get_searcher()
 
@@ -712,7 +729,10 @@ async def chat_corpus(req: CorpusChatRequest):
         answer_parts: list[str] = []
         captured_sources: list[dict] | None = None
 
-        async for line in stream_corpus_chat(message, history, searcher):
+        top_k = req.retrieve_top_k or _CORPUS_RETRIEVE_TOP_K
+        async for line in stream_corpus_chat(
+            message, history, searcher, retrieve_top_k=top_k
+        ):
             # Inspect the JSON payload to accumulate tokens + sources for persistence.
             payload = line[len("data: "):].strip() if line.startswith("data: ") else ""
             if payload and payload != "[DONE]":

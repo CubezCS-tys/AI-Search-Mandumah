@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Sparkles, User, Copy, Check, Search } from "lucide-react";
+import { Sparkles, User, Copy, Check, Search, RefreshCw, Layers } from "lucide-react";
 import type { ChatMessage, Source } from "@/types/chat";
 import SourcesList from "./SourcesList";
 
@@ -28,6 +28,10 @@ interface AssistantMessageProps {
   query?: string;
   /** The user question this answer responds to — powers the "search this" action. */
   userQuery?: string;
+  /** Re-answer the last turn. Provided only for the last assistant message. */
+  onRegenerate?: (retrieveTopK?: number) => void;
+  /** Whether regenerate controls should be active. */
+  canRegenerate?: boolean;
 }
 
 /** Subtle "searching the corpus" status row shown before the first token. */
@@ -241,7 +245,7 @@ function SearchButton({ query }: { query: string }) {
   );
 }
 
-function AssistantMessage({ content, sources, streaming, retrieving, query, userQuery }: AssistantMessageProps) {
+function AssistantMessage({ content, sources, streaming, retrieving, query, userQuery, onRegenerate, canRegenerate }: AssistantMessageProps) {
   const body = useMemo(
     () => <CitedAnswer content={content} sources={sources ?? []} />,
     [content, sources],
@@ -273,9 +277,33 @@ function AssistantMessage({ content, sources, streaming, retrieving, query, user
           />
         )}
         {!streaming && content.length > 0 && (
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <CopyButton content={content} />
             {userQuery && <SearchButton query={userQuery} />}
+            {onRegenerate && (
+              <>
+                <button
+                  onClick={() => onRegenerate()}
+                  disabled={!canRegenerate}
+                  aria-label="إعادة توليد الإجابة"
+                  title="إعادة توليد الإجابة"
+                  className="mt-2 flex items-center gap-1 rounded-md px-1.5 py-1 font-arabic text-[12px] text-text-muted transition hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <RefreshCw size={14} />
+                  <span>إعادة توليد</span>
+                </button>
+                <button
+                  onClick={() => onRegenerate(20)}
+                  disabled={!canRegenerate}
+                  aria-label="مزيد من المصادر"
+                  title="إعادة الإجابة باستخدام مصادر أكثر"
+                  className="mt-2 flex items-center gap-1 rounded-md px-1.5 py-1 font-arabic text-[12px] text-text-muted transition hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Layers size={14} />
+                  <span>مزيد من المصادر</span>
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -306,6 +334,10 @@ interface ChatMessagesProps {
   isRetrieving?: boolean;
   /** First user message — used as the query for source highlight links. */
   rootQuery?: string;
+  /** Re-answer the last turn (optionally with more sources). */
+  onRegenerate?: (retrieveTopK?: number) => void;
+  /** Whether regenerate controls should be active. */
+  canRegenerate?: boolean;
 }
 
 export default function ChatMessages({
@@ -313,7 +345,16 @@ export default function ChatMessages({
   streamingIndex,
   isRetrieving,
   rootQuery,
+  onRegenerate,
+  canRegenerate,
 }: ChatMessagesProps) {
+  const lastAssistantIndex = (() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "assistant") return i;
+    }
+    return -1;
+  })();
+
   return (
     <div className="flex flex-col gap-7">
       {messages.map((m, i) =>
@@ -332,6 +373,8 @@ export default function ChatMessages({
                 ? messages[i - 1].content
                 : undefined
             }
+            onRegenerate={i === lastAssistantIndex ? onRegenerate : undefined}
+            canRegenerate={canRegenerate}
           />
         ),
       )}

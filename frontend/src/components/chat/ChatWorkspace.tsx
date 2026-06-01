@@ -155,27 +155,14 @@ export default function ChatWorkspace({
     requestAnimationFrame(() => composerRef.current?.focus());
   }, []);
 
-  /* ── Send a message ────────────────────────────────────────── */
-  const handleSend = useCallback(
-    (override?: string) => {
-      const message = (override ?? input).trim();
-      if (!message || streaming) return;
-
-      setError(null);
-      setInput("");
-
-      const userMsg: ChatMessage = { role: "user", content: message };
-      const assistantMsg: ChatMessage = { role: "assistant", content: "" };
-
-      let assistantIndex = 0;
-      setMessages((prev) => {
-        assistantIndex = prev.length + 1;
-        return [...prev, userMsg, assistantMsg];
-      });
-      setStreamingIndex(assistantIndex);
-      setStreaming(true);
-      setIsRetrieving(true);
-
+  /* ── Streaming core (shared by send + regenerate) ──────────── */
+  const streamInto = useCallback(
+    (request: {
+      conversation_id?: string;
+      message: string;
+      regenerate?: boolean;
+      retrieve_top_k?: number;
+    }) => {
       const controller = new AbortController();
       abortRef.current = controller;
 
@@ -191,7 +178,7 @@ export default function ChatWorkspace({
       };
 
       streamCorpusChat(
-        { conversation_id: activeId ?? undefined, message },
+        request,
         {
           onConversationId: (id) => {
             setActiveId(id);
@@ -219,8 +206,7 @@ export default function ChatWorkspace({
             updateAssistant((m) => ({
               ...m,
               content:
-                m.content ||
-                "تعذّر إكمال الإجابة. يرجى المحاولة مرة أخرى.",
+                m.content || "تعذّر إكمال الإجابة. يرجى المحاولة مرة أخرى.",
             }));
             setError(msg);
           },
@@ -228,7 +214,66 @@ export default function ChatWorkspace({
         controller.signal,
       );
     },
-    [input, streaming, activeId, refreshList],
+    [refreshList],
+  );
+
+  /* ── Send a message ────────────────────────────────────────── */
+  const handleSend = useCallback(
+    (override?: string) => {
+      const message = (override ?? input).trim();
+      if (!message || streaming) return;
+
+      setError(null);
+      setInput("");
+
+      const userMsg: ChatMessage = { role: "user", content: message };
+      const assistantMsg: ChatMessage = { role: "assistant", content: "" };
+
+      let assistantIndex = 0;
+      setMessages((prev) => {
+        assistantIndex = prev.length + 1;
+        return [...prev, userMsg, assistantMsg];
+      });
+      setStreamingIndex(assistantIndex);
+      setStreaming(true);
+      setIsRetrieving(true);
+
+      streamInto({ conversation_id: activeId ?? undefined, message });
+    },
+    [input, streaming, activeId, streamInto],
+  );
+
+  /* ── Regenerate the last answer (optionally with more sources) ─ */
+  const handleRegenerate = useCallback(
+    (retrieveTopK?: number) => {
+      if (streaming || !activeId) return;
+      const lastUser = [...messages].reverse().find((m) => m.role === "user");
+      if (!lastUser) return;
+
+      setError(null);
+
+      let assistantIndex = 0;
+      setMessages((prev) => {
+        const next = [...prev];
+        if (next.length && next[next.length - 1].role === "assistant") {
+          next.pop();
+        }
+        assistantIndex = next.length;
+        next.push({ role: "assistant", content: "" });
+        return next;
+      });
+      setStreamingIndex(assistantIndex);
+      setStreaming(true);
+      setIsRetrieving(true);
+
+      streamInto({
+        conversation_id: activeId,
+        message: lastUser.content,
+        regenerate: true,
+        retrieve_top_k: retrieveTopK,
+      });
+    },
+    [streaming, activeId, messages, streamInto],
   );
 
   const handleStop = useCallback(() => {
@@ -374,6 +419,8 @@ export default function ChatWorkspace({
                   streamingIndex={streamingIndex}
                   isRetrieving={isRetrieving}
                   rootQuery={rootQuery}
+                  onRegenerate={handleRegenerate}
+                  canRegenerate={!streaming && activeId !== null}
                 />
               )}
               <div ref={endRef} className="h-1" />

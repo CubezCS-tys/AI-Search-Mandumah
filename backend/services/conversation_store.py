@@ -257,3 +257,26 @@ def update_timestamp(conversation_id: str) -> None:
             (now, conversation_id),
         )
         conn.commit()
+
+
+def delete_last_assistant_message(conversation_id: str) -> bool:
+    """Delete the most recent assistant message in a conversation.
+
+    Used by "regenerate": the stale answer is removed so a fresh one can take
+    its place, while the preceding user question is preserved. Returns True if
+    a message was removed.
+    """
+    conn = _get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT id FROM messages "
+            "WHERE conversation_id = ? AND role = 'assistant' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
+        conn.commit()
+        return True
+

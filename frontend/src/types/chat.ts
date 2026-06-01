@@ -42,6 +42,10 @@ export interface ConversationSummary {
 export interface CorpusChatRequest {
   conversation_id?: string;
   message: string;
+  /** Re-answer the last user turn in place instead of appending a new exchange. */
+  regenerate?: boolean;
+  /** Retrieve more chunks for a broader answer ("more sources"). */
+  retrieve_top_k?: number;
 }
 
 /** Streaming event handlers for the corpus chat SSE stream. */

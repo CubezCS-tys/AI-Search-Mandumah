@@ -160,6 +160,7 @@ async def stream_corpus_chat(
     message: str,
     history: list[dict[str, str]],
     searcher: Any,
+    retrieve_top_k: int = RETRIEVE_TOP_K,
 ) -> AsyncGenerator[str, None]:
     """Yield SSE-formatted lines for a corpus-wide grounded chat turn.
 
@@ -171,6 +172,7 @@ async def stream_corpus_chat(
         message: The new user question.
         history: Prior ``[{"role": "user"|"assistant", "content": "..."}]`` turns.
         searcher: A ``Searcher`` instance used for retrieval.
+        retrieve_top_k: Number of chunks to retrieve (raised by "more sources").
 
     Yields:
         SSE lines: ``data: {"token": ...}``, then one ``data: {"sources": [...]}``,
@@ -179,7 +181,7 @@ async def stream_corpus_chat(
     try:
         query = await _reformulate_query(message, history)
         results = await asyncio.to_thread(
-            searcher.search, query, top_k=RETRIEVE_TOP_K, mode="hybrid"
+            searcher.search, query, top_k=retrieve_top_k, mode="hybrid"
         )
     except Exception:
         logger.exception("Corpus chat retrieval error")
