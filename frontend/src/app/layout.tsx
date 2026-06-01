@@ -28,10 +28,11 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl" suppressHydrationWarning>
       <head>
-        {/* Apply the saved theme before paint to avoid a flash of the wrong theme. */}
+        {/* Apply the saved theme before paint to avoid a flash of the wrong theme.
+            Defaults to light; dark is opt-in via the header toggle. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("theme");var d=t==="dark"||(!t&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(d)document.documentElement.classList.add("dark");}catch(e){}})();`,
+            __html: `(function(){try{if(localStorage.getItem("theme")==="dark")document.documentElement.classList.add("dark");}catch(e){}})();`,
           }}
         />
       </head>
