@@ -7,7 +7,7 @@ See `.github/copilot-instructions.md` for the autonomy + verification contract.
 
 - [x] **Search ↔ Chat handoffs**: "اسأل في المحادثة" button on search results that opens Chat seeded with the query + selected results; and a "ابحث عن هذا" action from a chat answer.
 - [x] **Faceted filters on search**: journal and section facets with result counts, driven by the existing filter params.
-- [ ] **Mobile responsive**: chat sidebar collapses to a drawer; document split-view stacks; composer and result cards adapt to small screens.
+- [x] **Mobile responsive**: chat sidebar collapses to a drawer; document split-view stacks; composer and result cards adapt to small screens.
 - [ ] **In-PDF find**: a find-in-document box in `DocumentViewer` reusing the OCR word index + existing highlight overlay.
 - [ ] **Conversation management**: rename inline + delete confirmation in `ChatSidebar` (wire to existing PATCH/DELETE routes), plus "تصدير المحادثة" (export as markdown).
 

@@ -159,20 +159,21 @@ function DocumentContent({ docId }: { docId: string }) {
         </div>
       )}
 
-      {/* PDF takes full width but leaves room when chat is open */}
+      {/* PDF takes full width but leaves room when chat is open (desktop split;
+          on mobile the chat panel overlays full-width instead of pushing). */}
       <div
-        className="transition-all duration-500 ease-out"
-        style={{ marginRight: chatOpen ? "45%" : "0" }}
+        className={`transition-all duration-500 ease-out ${
+          chatOpen ? "lg:mr-[45%]" : "mr-0"
+        }`}
       >
         <DocumentViewer docId={docId} query={query} chatOpen={chatOpen} citationText={citationText} citationKey={citationKey} onCitationNotFound={handleCitationNotFound} onAskAboutSelection={handleAskAboutSelection} analyzing={analyzing} />
       </div>
 
-      {/* Chat panel — fixed to right side of viewport with slide-in */}
+      {/* Chat panel — full-width drawer on mobile, 45% side split on desktop */}
       {chatOpen && (
       <div
-        className={`fixed top-13 right-0 bottom-0 z-50 border-l border-border/60 bg-white shadow-[-8px_0_30px_rgba(0,0,0,0.08)]`}
+        className="fixed top-13 right-0 bottom-0 z-50 w-full border-l border-border/60 bg-white shadow-[-8px_0_30px_rgba(0,0,0,0.08)] lg:w-[45%]"
         style={{
-          width: "45%",
           animation: "chat-slide-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both",
         }}
       >
