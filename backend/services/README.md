@@ -6,15 +6,15 @@ Business logic layer sitting between the API and external dependencies (Qdrant, 
 
 ## search.py
 
-Hybrid vector search over the Qdrant collection using BGE-M3 embeddings.
+Hybrid vector search over the Qdrant collection using OpenAI `text-embedding-3-small` embeddings.
 
 ### How the three modes work
 
 | Mode | Vectors used | Best for |
 |---|---|---|
 | `hybrid` | Dense + sparse, fused with RRF | Default; best overall quality |
-| `dense` | 1024-d float (semantic similarity) | Conceptual / paraphrase queries |
-| `sparse` | Learned lexical weights (BGE-M3) | Exact terms, names, acronyms |
+| `dense` | 1536-d float (semantic similarity) | Conceptual / paraphrase queries |
+| `sparse` | Hashed TF-IDF lexical weights (IDF server-side) | Exact terms, names, acronyms |
 
 **Hybrid mode** runs both dense and sparse as Qdrant `Prefetch` queries (`prefetch_k = top_k × 3` results each), then fuses the two ranked lists on the Qdrant server using **Reciprocal Rank Fusion**:
 

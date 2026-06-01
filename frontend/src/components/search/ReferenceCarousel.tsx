@@ -6,6 +6,7 @@ import Link from "next/link";
 import { ChevronLeft, ChevronRight, ExternalLink, FileText } from "lucide-react";
 import type { SearchResultItem } from "@/types/search";
 import { getSectionColor } from "@/lib/utils";
+import HighlightText from "./HighlightText";
 
 interface ReferenceCarouselProps {
   results: SearchResultItem[];
@@ -86,6 +87,7 @@ export default function ReferenceCarousel({
         <button
           onClick={goPrev}
           disabled={total <= 1}
+          aria-label="المرجع السابق"
           className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-bg-elevated text-text-muted transition hover:text-text-primary disabled:opacity-30"
         >
           <ChevronRight size={15} />
@@ -96,6 +98,8 @@ export default function ReferenceCarousel({
             <button
               key={i}
               onClick={() => onSelect(i)}
+              aria-label={`المرجع ${i + 1}`}
+              aria-current={i === activeIndex}
               className={`rounded-full transition-all ${
                 i === activeIndex
                   ? "h-2 w-5 bg-rose-500"
@@ -113,6 +117,7 @@ export default function ReferenceCarousel({
         <button
           onClick={goNext}
           disabled={total <= 1}
+          aria-label="المرجع التالي"
           className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-bg-elevated text-text-muted transition hover:text-text-primary disabled:opacity-30"
         >
           <ChevronLeft size={15} />
@@ -146,7 +151,7 @@ function CardFace({ result, index, query, isActive }: CardFaceProps) {
             {result.section.replace(/_/g, " ")}
           </span>
         )}
-        <span className="ms-auto font-mono text-[12px] font-semibold text-rose-600">
+        <span className="ms-auto font-mono text-[12px] font-semibold text-rose-600" dir="ltr">
           {result.score.toFixed(1)}
         </span>
       </div>
@@ -162,7 +167,7 @@ function CardFace({ result, index, query, isActive }: CardFaceProps) {
           isActive ? "line-clamp-6" : "line-clamp-3"
         }`}
       >
-        {result.text}
+        <HighlightText text={result.text} query={query} />
       </p>
 
       {/* Footer */}

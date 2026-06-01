@@ -9,7 +9,7 @@ Offline ingestion tools: chunker, embedder, and the three-stage ingestion pipeli
 | File | Purpose |
 |---|---|
 | `chunker.py` | Splits Azure DI document text into retrieval-optimised chunks |
-| `embedder.py` | BGE-M3 wrapper producing dense + sparse vectors |
+| `embedder.py` | OpenAI async embedder producing dense + TF-IDF sparse vectors |
 | `ingest.py` | Three-stage pipelined ingestion CLI |
 | `test_chunker.py` | Chunker validation and statistics script |
 
@@ -54,7 +54,7 @@ class Chunk:
     chunk_id: str       # "{doc_id}_chunk_{n:03d}"
     doc_id: str
     text: str           # Raw chunk text (stored in Qdrant payload)
-    embed_text: str     # "{title}\n{section}\n{text}" — fed to BGE-M3
+    embed_text: str     # "{title}\n{section}\n{text}" — fed to the embedder
     section: str        # Detected section label, or "" for body text
     char_len: int
     chunk_index: int
@@ -75,14 +75,14 @@ for chunk in result.chunks:
 
 ## embedder.py
 
-Wraps `BAAI/bge-m3` via the FlagEmbedding library. Produces dense (1024-d float) and sparse (learned lexical weights) vectors from a single forward pass.
+`OpenAIEmbedder` calls the OpenAI `text-embedding-3-small` API (async, concurrent) for dense (1536-d float) vectors, plus a `SparseVectorizer` producing hashed TF-IDF sparse weights (Qdrant applies IDF server-side). A legacy `BGEm3Embedder` remains available as a fallback until the migration is verified.
 
 ### Configuration
 
 | Parameter | Default |
 |---|---|
-| `model_name` | `"BAAI/bge-m3"` |
-| `batch_size` | `32` |
+| `model_name` | `"text-embedding-3-small"` |
+| `batch_size` | `100` |
 | `max_length` | `8192` tokens |
 | `use_fp16` | `True` |
 

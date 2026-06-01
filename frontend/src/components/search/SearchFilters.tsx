@@ -40,6 +40,8 @@ export default function SearchFilters({ journalId, section, docId, onChange }: S
       <button
         type="button"
         onClick={() => setOpen(!open)}
+        aria-label="تصفية النتائج"
+        aria-expanded={open}
         className={`
           flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-all
           ${hasFilters
@@ -78,7 +80,7 @@ export default function SearchFilters({ journalId, section, docId, onChange }: S
                     مسح الكل
                   </button>
                 )}
-                <button onClick={() => setOpen(false)} className="text-text-muted hover:text-text-secondary">
+                <button onClick={() => setOpen(false)} aria-label="إغلاق التصفية" className="text-text-muted hover:text-text-secondary">
                   <X size={16} />
                 </button>
               </div>

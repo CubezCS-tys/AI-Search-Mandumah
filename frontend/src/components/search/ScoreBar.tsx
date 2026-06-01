@@ -15,7 +15,14 @@ export default function ScoreBar({ score, maxScore }: ScoreBarProps) {
   const rawPct = (score * 100).toFixed(1);
 
   return (
-    <div className="flex items-center gap-2.5">
+    <div
+      className="flex items-center gap-2.5"
+      role="meter"
+      aria-valuenow={Number(rawPct)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={`درجة الصلة ${rawPct}%`}
+    >
       <div className="h-1 flex-1 overflow-hidden rounded-full bg-border-subtle/70">
         <motion.div
           className="h-full rounded-full"
@@ -32,7 +39,7 @@ export default function ScoreBar({ score, maxScore }: ScoreBarProps) {
           transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
         />
       </div>
-      <span className="min-w-[2.5rem] text-end text-[11px] tabular-nums text-text-muted">
+      <span className="min-w-[2.5rem] text-end text-[11px] tabular-nums text-text-muted" dir="ltr">
         {rawPct}
       </span>
     </div>

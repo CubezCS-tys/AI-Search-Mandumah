@@ -752,16 +752,16 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
           <div className="flex-1" />
 
           {/* Zoom controls */}
-          <button onClick={zoomOut} className={btnNormal} title="Zoom out">
+          <button onClick={zoomOut} className={btnNormal} title="Zoom out" aria-label="تصغير">
             <ZoomOut size={13} />
           </button>
-          <span className="min-w-[40px] text-center text-xs text-text-muted tabular-nums">
+          <span className="min-w-[40px] text-center text-xs text-text-muted tabular-nums" dir="ltr">
             {Math.round(zoom * 100)}%
           </span>
-          <button onClick={zoomIn} className={btnNormal} title="Zoom in">
+          <button onClick={zoomIn} className={btnNormal} title="Zoom in" aria-label="تكبير">
             <ZoomIn size={13} />
           </button>
-          <button onClick={fitPage} className={btnNormal} title="Fit to page">
+          <button onClick={fitPage} className={btnNormal} title="Fit to page" aria-label="ملاءمة الصفحة">
             <Maximize size={13} />
           </button>
 
@@ -774,6 +774,7 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
             download
             className={`${btnNormal} flex items-center gap-1`}
             title="Download PDF"
+            aria-label="تنزيل الملف"
           >
             <Download size={13} />
           </a>
@@ -888,6 +889,7 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
           className="flex items-center justify-center w-10 h-10 rounded-full bg-white border border-gray-300 shadow-lg cursor-pointer hover:bg-gray-100 hover:scale-110 active:scale-95 transition-all duration-150"
           title="الأعلى"
+          aria-label="التمرير إلى الأعلى"
         >
           <ChevronsUp size={20} className="text-gray-700" />
         </button>
@@ -895,6 +897,7 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
           onClick={() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" })}
           className="flex items-center justify-center w-10 h-10 rounded-full bg-white border border-gray-300 shadow-lg cursor-pointer hover:bg-gray-100 hover:scale-110 active:scale-95 transition-all duration-150"
           title="الأسفل"
+          aria-label="التمرير إلى الأسفل"
         >
           <ChevronsDown size={20} className="text-gray-700" />
         </button>

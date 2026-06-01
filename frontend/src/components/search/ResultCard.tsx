@@ -6,6 +6,7 @@ import { FileText } from "lucide-react";
 import type { SearchResultItem } from "@/types/search";
 import { getSectionColor } from "@/lib/utils";
 import ScoreBar from "./ScoreBar";
+import HighlightText from "./HighlightText";
 
 interface ResultCardProps {
   result: SearchResultItem;
@@ -45,6 +46,13 @@ export default function ResultCard({ result, index, query = "", maxScore }: Resu
             </span>
           )}
         </div>
+
+        {/* Snippet */}
+        {result.text && (
+          <p className="mb-3 font-arabic text-[12.5px] leading-relaxed text-text-muted line-clamp-2">
+            <HighlightText text={result.text} query={query} />
+          </p>
+        )}
 
         {/* Bottom row: metadata + score */}
         <div className="flex items-center gap-3">

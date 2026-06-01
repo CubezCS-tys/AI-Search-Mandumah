@@ -45,16 +45,16 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Al-Manthooma Search API", version="0.1.0")
 
-# CORS — allow Next.js dev server and any ngrok tunnel
-_EXTRA_ORIGINS = [
+# CORS — allow configurable origins, default to wildcard for dev
+_CORS_ORIGINS = [
     o.strip()
-    for o in os.getenv("EXTRA_CORS_ORIGINS", "").split(",")
+    for o in os.getenv("CORS_ORIGINS", "*").split(",")
     if o.strip()
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -64,13 +64,24 @@ app.add_middleware(
 _API_KEY = os.getenv("API_KEY")
 
 
+_API_KEY_EXEMPT_PATHS = {"/api/health", "/docs", "/openapi.json"}
+
+
 @app.middleware("http")
 async def _api_key_guard(request: Request, call_next):
-    """If API_KEY env var is set, require a matching X-API-Key header."""
-    if _API_KEY and request.headers.get("X-API-Key") != _API_KEY:
-        return Response(
-            content="Unauthorized", status_code=401, media_type="text/plain"
+    """If API_KEY env var is set, require a matching X-API-Key header.
+
+    Exempts CORS preflight (OPTIONS) and health-check endpoints.
+    """
+    if _API_KEY:
+        is_exempt = (
+            request.method == "OPTIONS"
+            or request.url.path in _API_KEY_EXEMPT_PATHS
         )
+        if not is_exempt and request.headers.get("X-API-Key") != _API_KEY:
+            return Response(
+                content="Unauthorized", status_code=401, media_type="text/plain"
+            )
     return await call_next(request)
 
 
@@ -156,25 +167,20 @@ async def stats():
         info = searcher.client.get_collection(searcher.collection_name)
         chunks = info.points_count or 0
 
-        # Count unique doc_ids via scroll
-        doc_ids: set[str] = set()
-        offset = None
-        while True:
-            points, offset = searcher.client.scroll(
+        # Use facet counting on the indexed doc_id field (O(1) vs O(N) scroll)
+        try:
+            from qdrant_client import models
+            facet_response = searcher.client.facet(
                 collection_name=searcher.collection_name,
-                limit=250,
-                offset=offset,
-                with_payload=["doc_id"],
-                with_vectors=False,
+                key="doc_id",
+                limit=100000,  # high limit to count all unique doc_ids
             )
-            for pt in points:
-                did = (pt.payload or {}).get("doc_id")
-                if did:
-                    doc_ids.add(did)
-            if offset is None:
-                break
+            documents = len(facet_response.hits)
+        except Exception:
+            # Fallback: estimate from collection info if facet unavailable
+            documents = 0
 
-        return {"chunks": chunks, "documents": len(doc_ids)}
+        return {"chunks": chunks, "documents": documents}
     except Exception as e:
         return {"chunks": 0, "documents": 0, "error": str(e)}
 
@@ -324,6 +330,11 @@ async def synthesize(req: SynthesisRequest):
 
 _DOC_ID_RE = re.compile(r"^\d{4}-\d{3}-\d{3}-\d{3}$")
 _OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", str(Path(__file__).parent.parent / "output")))
+_EXTRA_DOC_DIRS = [
+    Path(d.strip())
+    for d in os.getenv("EXTRA_DOC_DIRS", str(Path(__file__).parent.parent / "output_batch05")).split(",")
+    if d.strip()
+]
 
 
 @app.get("/api/pdf/{doc_id}")
@@ -343,8 +354,22 @@ async def get_pdf(doc_id: str):
 # ── Document OCR data ─────────────────────────────────────────────────────
 
 def _doc_dir(doc_id: str) -> Path:
+    """Locate a document directory, checking the nested output/ layout first,
+    then any flat extra directories (e.g. output_batch05/)."""
+    # Nested layout: output/output_XXXX/doc_id/
     journal_id = doc_id[:4]
-    return _OUTPUT_DIR / f"output_{journal_id}" / doc_id
+    nested = _OUTPUT_DIR / f"output_{journal_id}" / doc_id
+    if nested.is_dir():
+        return nested
+
+    # Flat layout: extra_dir/doc_id/
+    for extra in _EXTRA_DOC_DIRS:
+        flat = extra / doc_id
+        if flat.is_dir():
+            return flat
+
+    # Fallback to the original nested path (will 404 naturally)
+    return nested
 
 
 # LRU cache for raster dimensions (avoids re-opening the PDF for every OCR request)
@@ -635,3 +660,142 @@ async def analyze(doc_id: str):
         _analysis_cache.popitem(last=False)
 
     return JSONResponse(content=parsed)
+
+
+# ── Corpus-wide chat (multi-turn, retrieval across the whole collection) ──
+
+_CORPUS_HISTORY_LIMIT = 20
+
+
+class CorpusChatRequest(BaseModel):
+    conversation_id: str | None = None
+    message: str = Field(..., max_length=10_000)
+
+
+@app.post("/api/chat/corpus")
+async def chat_corpus(req: CorpusChatRequest):
+    """Stream a corpus-wide grounded chat answer with persistent history."""
+    message = req.message.strip()
+    if not message:
+        raise HTTPException(400, "Message cannot be empty")
+
+    from backend.services import conversation_store as store
+    from backend.services.corpus_chat import stream_corpus_chat
+
+    # Resolve or create the conversation (SQLite I/O offloaded off the event loop).
+    conversation_id = req.conversation_id
+    conv = (
+        await asyncio.to_thread(store.get_conversation, conversation_id)
+        if conversation_id
+        else None
+    )
+    if conv is None:
+        title = message[:60].strip() or "محادثة جديدة"
+        conversation_id = await asyncio.to_thread(store.create_conversation, title)
+        history: list[dict[str, str]] = []
+    else:
+        conversation_id = conv["id"]
+        history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in conv["messages"]
+            if m["role"] in ("user", "assistant")
+        ][-_CORPUS_HISTORY_LIMIT:]
+
+    # Persist the user message before streaming.
+    await asyncio.to_thread(store.add_message, conversation_id, "user", message)
+
+    searcher = get_searcher()
+
+    async def event_stream():
+        yield f"data: {json.dumps({'conversation_id': conversation_id})}\n\n"
+
+        answer_parts: list[str] = []
+        captured_sources: list[dict] | None = None
+
+        async for line in stream_corpus_chat(message, history, searcher):
+            # Inspect the JSON payload to accumulate tokens + sources for persistence.
+            payload = line[len("data: "):].strip() if line.startswith("data: ") else ""
+            if payload and payload != "[DONE]":
+                try:
+                    obj = json.loads(payload)
+                except (json.JSONDecodeError, ValueError):
+                    obj = None
+                if isinstance(obj, dict):
+                    if "token" in obj:
+                        answer_parts.append(obj["token"])
+                    elif "sources" in obj:
+                        captured_sources = obj["sources"]
+            yield line
+
+        assistant_text = "".join(answer_parts)
+        if assistant_text:
+            try:
+                await asyncio.to_thread(
+                    store.add_message,
+                    conversation_id,
+                    "assistant",
+                    assistant_text,
+                    captured_sources,
+                )
+            except Exception:
+                logger.exception("Failed to persist assistant message")
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            # Disable proxy/Nginx response buffering so SSE tokens flush live.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+class RenameConversationRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=300)
+
+
+@app.get("/api/conversations")
+async def list_conversations_route():
+    """List all conversations (most-recently-updated first)."""
+    from backend.services import conversation_store as store
+
+    return JSONResponse(content=await asyncio.to_thread(store.list_conversations))
+
+
+@app.get("/api/conversations/{conversation_id}")
+async def get_conversation_route(conversation_id: str):
+    """Return a single conversation with its messages."""
+    from backend.services import conversation_store as store
+
+    conv = await asyncio.to_thread(store.get_conversation, conversation_id)
+    if conv is None:
+        raise HTTPException(404, "Conversation not found")
+    return JSONResponse(content=conv)
+
+
+@app.patch("/api/conversations/{conversation_id}")
+async def rename_conversation_route(
+    conversation_id: str, req: RenameConversationRequest
+):
+    """Rename a conversation."""
+    from backend.services import conversation_store as store
+
+    renamed = await asyncio.to_thread(
+        store.rename_conversation, conversation_id, req.title.strip()
+    )
+    if not renamed:
+        raise HTTPException(404, "Conversation not found")
+    return JSONResponse(content={"ok": True})
+
+
+@app.delete("/api/conversations/{conversation_id}")
+async def delete_conversation_route(conversation_id: str):
+    """Delete a conversation and its messages."""
+    from backend.services import conversation_store as store
+
+    deleted = await asyncio.to_thread(store.delete_conversation, conversation_id)
+    if not deleted:
+        raise HTTPException(404, "Conversation not found")
+    return JSONResponse(content={"ok": True})

@@ -6,7 +6,7 @@ Arabic academic document search and chat platform, built on top of the [Mandumah
 
 ## What it does
 
-- **Full-text hybrid search** over Arabic academic articles using BGE-M3 dense + sparse vectors with Reciprocal Rank Fusion
+- **Full-text hybrid search** over Arabic academic articles using OpenAI `text-embedding-3-small` dense vectors + TF-IDF sparse vectors with Reciprocal Rank Fusion
 - **Document viewer** with word-level OCR overlay sourced from Azure Document Intelligence
 - **Document-scoped chat** powered by GPT-4o-mini, grounded in the full text of a single article
 
@@ -19,7 +19,7 @@ Arabic academic document search and chat platform, built on top of the [Mandumah
 | Frontend | Next.js 16, React 19, Tailwind v4, SWR |
 | API server | FastAPI + Uvicorn |
 | Vector database | Qdrant (local) |
-| Embedding model | BGE-M3 (`BAAI/bge-m3`) via FlagEmbedding |
+| Embedding model | OpenAI `text-embedding-3-small` (1536-d dense) + hashed TF-IDF sparse |
 | OCR source | Azure Document Intelligence |
 | Chat model | GPT-4o-mini (OpenAI) |
 | PDF rendering | PyMuPDF (fitz) |
@@ -124,12 +124,12 @@ The journal ID is always the first 4 characters.
 
 **Ingestion** (offline, run once):
 ```
-Azure DI JSON → Chunker → BGE-M3 Embedder → Qdrant upsert
+Azure DI JSON → Chunker → OpenAI Embedder (async) → Qdrant upsert
 ```
 
 **Search** (per request):
 ```
-Query → BGE-M3 encode → Qdrant hybrid search (RRF) → Results
+Query → OpenAI encode → Qdrant hybrid search (RRF) → Results
 ```
 
 **Document view + chat** (per request):

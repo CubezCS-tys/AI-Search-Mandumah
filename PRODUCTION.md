@@ -24,7 +24,7 @@
 | Disk | 20 GB SSD | 40 GB SSD |
 | OS | Ubuntu 22.04 / 24.04 | same |
 
-**Why 8 GB RAM minimum:** BGE-M3 in FP16 holds ~2.5 GB in memory once loaded. Qdrant needs ~0.5–1 GB depending on collection size. The OS and FastAPI process take ~1 GB. 8 GB gives headroom.
+**Why 8 GB RAM minimum:** embeddings are now produced via the OpenAI API (no local model held in RAM). Qdrant needs ~0.5–1 GB depending on collection size, and the OS + FastAPI process take ~1 GB. 8 GB gives comfortable headroom; the API itself is lightweight since it only makes network calls to OpenAI.
 
 **Disk:** the `output/` directory is currently 8.2 GB (PDFs + Azure DI JSONs). Budget for it to grow.
 
@@ -94,11 +94,7 @@ python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-BGE-M3 will be downloaded from HuggingFace on first use (~2 GB). To pre-download it now:
-
-```bash
-.venv/bin/python -c "from FlagEmbedding import BGEM3FlagModel; BGEM3FlagModel('BAAI/bge-m3')"
-```
+Embeddings are produced via the OpenAI API, so there is no large model to pre-download. Ensure `OPENAI_API_KEY` is set in `.env` (Step 5) before running ingestion or search.
 
 ---
 
@@ -212,7 +208,7 @@ sudo systemctl start mandumah-api
 sudo systemctl status mandumah-api
 ```
 
-> **Note on `--workers 2`:** BGE-M3 will be loaded once per worker process (2 × ~2.5 GB = ~5 GB RAM for the model alone). If RAM is tight, use `--workers 1`.
+> **Note on `--workers 2`:** each worker process is lightweight since embeddings come from the OpenAI API rather than a local model. Scale workers based on CPU cores and expected concurrency.
 
 ---
 
@@ -353,7 +349,7 @@ cd /home/mandumah/app
 .venv/bin/python -m pipeline.ingest --input-dir output/
 ```
 
-Ingestion is CPU-heavy (BGE-M3 encodes on CPU by default). It will run slowly in the background while the API stays live. You can also add `--limit 10` to test a small batch first.
+Ingestion calls the OpenAI embedding API concurrently (rate-limited). It runs in the background while the API stays live. You can also add `--limit 10` to test a small batch first.
 
 ---
 
@@ -406,7 +402,6 @@ rsync -avz /home/mandumah/app/storage/ backups@backup-server:/backups/qdrant/
 - [ ] Transfer `output/` (8.2 GB) via rsync
 - [ ] Transfer `storage/` (8.9 MB) via rsync
 - [ ] Set up Python venv and install requirements
-- [ ] Pre-download BGE-M3 model
 - [ ] Install and start Qdrant as systemd service
 - [ ] Verify Qdrant collection is intact (407 points)
 - [ ] Create `.env` with `OPENAI_API_KEY` and `API_KEY`

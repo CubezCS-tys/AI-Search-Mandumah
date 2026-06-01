@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
+import { MessageSquare } from "lucide-react";
 import SearchBar from "@/components/search/SearchBar";
 import NetworkBackground, {
   type NetworkHandle,
@@ -180,6 +181,14 @@ export default function Home() {
             </p>
 
             <SearchBar variant="hero" onSearch={handleSearch} />
+
+            <button
+              onClick={() => router.push("/chat")}
+              className="mt-4 inline-flex items-center gap-2 rounded-full border border-border bg-bg-elevated px-4 py-2 font-arabic text-[13px] font-medium text-text-secondary shadow-sm transition hover:border-accent/40 hover:text-accent"
+            >
+              <MessageSquare size={14} className="text-accent" />
+              أو ابدأ محادثة ذكية عبر المجموعة
+            </button>
 
             <div className="mt-10 flex items-center gap-6">
               <div className="flex items-center gap-2 text-xs text-text-muted">

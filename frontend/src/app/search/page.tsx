@@ -268,7 +268,7 @@ function SearchPageContent() {
         {/* Synthesis + results — two-column grid when synthesis is active */}
         {data && !isLoading && (
           <>
-            {data.warning && (
+            {data.warning && hydeEnabled && (
               <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 font-arabic text-sm leading-relaxed text-amber-800">
                 {data.warning}
               </div>

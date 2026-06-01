@@ -225,7 +225,8 @@ export default function SynthesisPanel({
           <div className="hidden items-center gap-1 rounded-full border border-border bg-bg-elevated/90 p-1 shadow-[0_1px_2px_rgba(15,23,42,0.05)] sm:flex">
             <button
               onClick={() => onSynthesisModeChange("standard")}
-              className={`${MODE_TOGGLE_BASE} ${
+              disabled={state === "streaming"}
+              className={`${MODE_TOGGLE_BASE} disabled:opacity-50 disabled:cursor-not-allowed ${
                 synthesisMode === "standard"
                   ? MODE_TOGGLE_ACTIVE
                   : MODE_TOGGLE_INACTIVE
@@ -235,7 +236,8 @@ export default function SynthesisPanel({
             </button>
             <button
               onClick={() => onSynthesisModeChange("advanced")}
-              className={`${MODE_TOGGLE_BASE} ${
+              disabled={state === "streaming"}
+              className={`${MODE_TOGGLE_BASE} disabled:opacity-50 disabled:cursor-not-allowed ${
                 synthesisMode === "advanced"
                   ? MODE_TOGGLE_ACTIVE
                   : MODE_TOGGLE_INACTIVE
@@ -247,6 +249,7 @@ export default function SynthesisPanel({
           {state === "streaming" && (
             <button
               onClick={handleStop}
+              aria-label="إيقاف التحليل"
               className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-arabic text-text-muted transition hover:text-text-primary"
             >
               <X size={11} /> إيقاف
@@ -262,6 +265,7 @@ export default function SynthesisPanel({
           )}
           <button
             onClick={handleReset}
+            aria-label="إغلاق التحليل"
             className="flex h-7 w-7 items-center justify-center rounded-lg border border-border text-text-muted transition hover:text-text-primary"
           >
             <X size={13} />

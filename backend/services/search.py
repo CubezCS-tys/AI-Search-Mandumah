@@ -26,30 +26,19 @@ from typing import Sequence
 
 logger = logging.getLogger(__name__)
 
-_ARABIC_NORMALIZE_TABLE = str.maketrans({
-    "أ": "ا",
-    "إ": "ا",
-    "آ": "ا",
-    "ى": "ي",
-    "ؤ": "و",
-    "ئ": "ي",
-    "ة": "ه",
-    "_": " ",
-})
-_ARABIC_DIACRITICS_RE = re.compile(r"[\u064B-\u065F\u0670\u06D6-\u06ED]")
-_TOKEN_RE = re.compile(r"[A-Za-z0-9\u0600-\u06FF]+")
+from backend.utils.arabic import (
+    ARABIC_NORMALIZE_TABLE as _ARABIC_NORMALIZE_TABLE,
+    ARABIC_DIACRITICS_RE as _ARABIC_DIACRITICS_RE,
+    TOKEN_RE as _TOKEN_RE,
+    STOPWORDS as _STOPWORDS_SET,
+)
 _AUTHORISH_TITLE_RE = re.compile(
     r"(^|\s)(?:أ\s*\.?\s*د|د\s*\.?|أ\s*\.?\s*م|م\s*\.?\s*م|الدكتور|الدكتوره|الدكتوراه|"
     r"الأستاذ|الاستاذ|الأستاذه|الاستاذه|prof\.?|dr\.?|by|اعداد|إعداد|بقلم)(\s|$)|"
     r"جامعة\s.+كلية|كلية\s.+قسم|قسم\s.+كلية|@|\.edu\.|\.ac\.|\.org$|\.com$",
     re.IGNORECASE,
 )
-_STOPWORDS = {
-    "في", "من", "على", "الى", "إلى", "عن", "مع", "بين", "هذا", "هذه", "ذلك", "تلك",
-    "وقد", "كما", "كما", "الى", "أن", "إن", "او", "أو", "ثم", "بعد", "قبل", "لدى",
-    "لها", "لهم", "عند", "حول", "ضمن", "كان", "كانت", "يكون", "تكون", "تم", "قد",
-    "the", "and", "for", "with", "from", "into", "that", "this",
-}
+_STOPWORDS = _STOPWORDS_SET
 
 
 @dataclass
@@ -95,8 +84,8 @@ class Searcher:
     @property
     def embedder(self):
         if self._embedder is None:
-            from backend.pipeline.embedder import BGEm3Embedder
-            self._embedder = BGEm3Embedder()
+            from backend.pipeline.embedder import OpenAIEmbedder
+            self._embedder = OpenAIEmbedder()
         return self._embedder
 
     def search(

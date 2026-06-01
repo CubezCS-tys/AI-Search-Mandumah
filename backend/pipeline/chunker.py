@@ -26,7 +26,6 @@ DEFAULT_OVERLAP_CHARS = 160  # ~10% of target
 
 # Regex patterns
 _PAGE_NUM_RE = re.compile(r"^[٠-٩\d]{1,4}$")
-_ARABIC_NUMS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 
 _REFERENCE_HEADERS = re.compile(
     r"^(المراجع|المصادر|قائمة المراجع|قائمة المصادر|المراجع والمصادر"
