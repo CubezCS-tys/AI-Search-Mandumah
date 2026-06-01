@@ -154,7 +154,7 @@ export default function SearchPreview({ results, networkRef, active }: Props) {
               <div
                 className="rounded-xl px-3.5 py-2.5 border"
                 style={{
-                  background: "rgba(255,255,255,0.82)",
+                  background: "rgba(var(--bg-elevated-rgb), 0.82)",
                   backdropFilter: "blur(14px)",
                   WebkitBackdropFilter: "blur(14px)",
                   borderColor: "rgba(155,27,48,0.16)",

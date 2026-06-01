@@ -115,7 +115,7 @@ export default function Home() {
         style={{
           zIndex: 1,
           background:
-            "radial-gradient(ellipse 70% 60% at 50% 50%, transparent 30%, rgba(250,250,250,0.85) 100%)",
+            "radial-gradient(ellipse 70% 60% at 50% 50%, transparent 30%, rgba(var(--bg-primary-rgb), 0.85) 100%)",
         }}
       />
 
@@ -132,8 +132,8 @@ export default function Home() {
               zIndex: 2,
               background:
                 phase === "embedding"
-                  ? "radial-gradient(ellipse 80% 80% at 50% 50%, rgba(250,250,250,0.92) 0%, rgba(250,250,250,0.97) 100%)"
-                  : "radial-gradient(ellipse 80% 80% at 50% 50%, rgba(155,27,48,0.04) 0%, rgba(26,26,46,0.10) 100%)",
+                  ? "radial-gradient(ellipse 80% 80% at 50% 50%, rgba(var(--bg-primary-rgb), 0.92) 0%, rgba(var(--bg-primary-rgb), 0.97) 100%)"
+                  : "radial-gradient(ellipse 80% 80% at 50% 50%, rgba(155,27,48,0.04) 0%, rgba(var(--bg-primary-rgb), 0.10) 100%)",
             }}
           />
         )}

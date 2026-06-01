@@ -23,6 +23,10 @@
   --radius: 12px;
   --radius-sm: 8px;
   --radius-lg: 20px;
+  /* RGB triplet used by the homepage vignette/animation overlays so they can
+     fade to the page background in either theme. */
+  --bg-primary-rgb: 250, 250, 250;
+  --bg-elevated-rgb: 255, 255, 255;
 }
 
 /* Dark theme — toggled by adding `.dark` on <html>. Overrides the same tokens
@@ -46,6 +50,8 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.40), 0 1px 3px rgba(0, 0, 0, 0.30);
   --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --bg-primary-rgb: 20, 20, 27;
+  --bg-elevated-rgb: 34, 34, 46;
 }
 
 @theme inline {
