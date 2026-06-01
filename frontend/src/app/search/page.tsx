@@ -6,6 +6,7 @@ import { MessageSquare } from "lucide-react";
 import Header from "@/components/layout/Header";
 import SearchBar from "@/components/search/SearchBar";
 import SearchFilters from "@/components/search/SearchFilters";
+import SearchFacets from "@/components/search/SearchFacets";
 import SearchResults from "@/components/search/SearchResults";
 import SearchMeta from "@/components/search/SearchMeta";
 import ResultSkeleton from "@/components/search/ResultSkeleton";
@@ -284,6 +285,13 @@ function SearchPageContent() {
               <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 font-arabic text-sm leading-relaxed text-amber-800">
                 {data.warning}
               </div>
+            )}
+            {!synthesisActive && data.results.length > 0 && (
+              <SearchFacets
+                results={data.results}
+                filters={filters}
+                onChange={handleFilterChange}
+              />
             )}
             <SearchResultsWorkspace
               key={searchContextKey}
