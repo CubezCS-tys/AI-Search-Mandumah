@@ -2,14 +2,35 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { Search, MessageSquare } from "lucide-react";
 import HealthIndicator from "./HealthIndicator";
 
 export default function Header({ compact = false }: { compact?: boolean }) {
   const pathname = usePathname();
+  const router = useRouter();
   const isChat = pathname?.startsWith("/chat");
   const isSearch = pathname?.startsWith("/search");
+
+  // Global shortcut: Ctrl/Cmd+K focuses the search box (or routes to /search).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        const input =
+          document.getElementById("global-search-input") as HTMLInputElement | null;
+        if (input) {
+          input.focus();
+          input.select();
+        } else {
+          router.push("/search");
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [router]);
 
   return (
     <header className="sticky top-0 z-40 border-b border-border/50 bg-white/80 backdrop-blur-xl">

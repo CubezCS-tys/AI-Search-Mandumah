@@ -145,6 +145,7 @@ export default function SearchBar({
 
           <input
             ref={inputRef}
+            id="global-search-input"
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}

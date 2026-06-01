@@ -81,7 +81,7 @@ const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
           )}
         </div>
         <p className="mt-1.5 text-center text-[10.5px] text-text-muted font-arabic">
-          اضغط Enter للإرسال · Shift+Enter لسطر جديد
+          اضغط Enter للإرسال · Shift+Enter لسطر جديد · Ctrl+Shift+O محادثة جديدة
         </p>
       </div>
     );

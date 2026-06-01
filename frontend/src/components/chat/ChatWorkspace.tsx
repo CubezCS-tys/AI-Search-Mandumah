@@ -155,6 +155,31 @@ export default function ChatWorkspace({
     requestAnimationFrame(() => composerRef.current?.focus());
   }, []);
 
+  // Keyboard shortcuts: Ctrl/Cmd+Shift+O starts a new chat; "/" focuses the
+  // composer when the user isn't already typing in a field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.shiftKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        handleNewChat();
+        return;
+      }
+      if (e.key === "/" && !mod) {
+        const el = e.target as HTMLElement | null;
+        const tag = el?.tagName;
+        const typing =
+          tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable;
+        if (!typing) {
+          e.preventDefault();
+          composerRef.current?.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handleNewChat]);
+
   /* ── Streaming core (shared by send + regenerate) ──────────── */
   const streamInto = useCallback(
     (request: {

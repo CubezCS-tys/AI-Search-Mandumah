@@ -28,5 +28,5 @@ See `.github/copilot-instructions.md` for the autonomy + verification contract.
 ## Icebox
 
 - [x] Citation accuracy eval harness (extend `eval/`).
-- [ ] Keyboard shortcuts (new chat, focus search, send).
+- [x] Keyboard shortcuts (new chat, focus search, send).
 - [ ] Dark mode.
