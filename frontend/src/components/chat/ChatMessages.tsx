@@ -126,6 +126,29 @@ function resolveDocId(quote: string, sources: Source[]): string | null {
   return sources[0].doc_id; // fall back to the top-ranked source
 }
 
+/** Doc_ids whose text was actually quoted in the answer (strict, no fallback). */
+function computeCitedDocIds(content: string, sources: Source[]): Set<string> {
+  const ids = new Set<string>();
+  if (!sources.length) return ids;
+  const { quotes } = prepareCitations(content);
+  for (const q of quotes) {
+    const nq = normalizeArabic(q);
+    if (!nq) continue;
+    for (const s of sources) {
+      const hay = s.text
+        ? normalizeArabic(s.text)
+        : s.snippet
+          ? normalizeArabic(s.snippet)
+          : "";
+      if (hay && hay.includes(nq)) {
+        ids.add(s.doc_id);
+        break;
+      }
+    }
+  }
+  return ids;
+}
+
 interface CitedAnswerProps {
   content: string;
   sources: Source[];
@@ -243,7 +266,11 @@ function AssistantMessage({ content, sources, streaming, retrieving, query, user
           </div>
         )}
         {sources && sources.length > 0 && (
-          <SourcesList sources={sources} query={query} />
+          <SourcesList
+            sources={sources}
+            query={query}
+            citedDocIds={!streaming ? computeCitedDocIds(content, sources) : undefined}
+          />
         )}
         {!streaming && content.length > 0 && (
           <div className="flex items-center gap-1">

@@ -193,6 +193,11 @@ async def stream_corpus_chat(
         yield "data: [DONE]\n\n"
         return
 
+    # Emit sources up front, as soon as retrieval finishes, so the UI can show
+    # them while the answer is still being generated.
+    sources = _build_sources(results)
+    yield f"data: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
+
     context = _build_context(results)
     system = SYSTEM_PROMPT.format(context=context)
 
@@ -224,6 +229,4 @@ async def stream_corpus_chat(
         yield "data: [DONE]\n\n"
         return
 
-    sources = _build_sources(results)
-    yield f"data: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
     yield "data: [DONE]\n\n"
