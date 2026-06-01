@@ -85,6 +85,93 @@ async def _api_key_guard(request: Request, call_next):
     return await call_next(request)
 
 
+# ── Request size guard + rate limiting ────────────────────────────────────
+#
+# Both protect the LLM-backed endpoints (chat/synthesis/search) from abuse and
+# runaway cost. In-memory only — fine for the current single-host deployment;
+# swap for a shared store (Redis) if/when we run multiple replicas.
+
+# Reject request bodies larger than this (bytes). Generous enough for long
+# conversation history payloads, tight enough to stop accidental/abusive bulk.
+_MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", str(1 * 1024 * 1024)))  # 1 MiB
+
+# Sliding-window rate limit applied to the expensive POST endpoints below.
+_RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+_RATE_LIMITED_PREFIXES = (
+    "/api/search",
+    "/api/chat",
+)
+_rate_window_seconds = 60.0
+_rate_hits: dict[str, list[float]] = {}
+_rate_lock = threading.Lock()
+
+
+def _client_key(request: Request) -> str:
+    """Identify the caller for rate limiting (proxy-aware, falls back to peer)."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",", 1)[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _rate_limit_ok(key: str) -> bool:
+    """Record a hit and report whether the caller is within the per-minute budget."""
+    now = time.monotonic()
+    cutoff = now - _rate_window_seconds
+    with _rate_lock:
+        hits = _rate_hits.get(key)
+        if hits is None:
+            hits = []
+            _rate_hits[key] = hits
+        # Drop timestamps older than the window.
+        i = 0
+        for ts in hits:
+            if ts >= cutoff:
+                break
+            i += 1
+        if i:
+            del hits[:i]
+        if len(hits) >= _RATE_LIMIT_PER_MINUTE:
+            return False
+        hits.append(now)
+        # Opportunistic cleanup so the dict can't grow unbounded.
+        if len(_rate_hits) > 4096:
+            for k in [k for k, v in _rate_hits.items() if not v or v[-1] < cutoff]:
+                _rate_hits.pop(k, None)
+        return True
+
+
+@app.middleware("http")
+async def _abuse_guard(request: Request, call_next):
+    """Enforce a max body size and a per-IP rate limit on expensive endpoints."""
+    if request.method == "POST":
+        # Body size guard — reject early using the declared Content-Length.
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                if int(cl) > _MAX_BODY_BYTES:
+                    return JSONResponse(
+                        {"detail": "Request body too large"}, status_code=413
+                    )
+            except ValueError:
+                return JSONResponse(
+                    {"detail": "Invalid Content-Length"}, status_code=400
+                )
+
+        # Rate limit the LLM-backed routes.
+        if _RATE_LIMIT_PER_MINUTE > 0 and request.url.path.startswith(
+            _RATE_LIMITED_PREFIXES
+        ):
+            if not _rate_limit_ok(_client_key(request)):
+                return JSONResponse(
+                    {"detail": "تم تجاوز الحد المسموح من الطلبات. حاول بعد قليل."},
+                    status_code=429,
+                    headers={"Retry-After": "60"},
+                )
+
+    return await call_next(request)
+
+
 # ── Lazy-loaded searcher (avoid loading BGE-M3 at import time) ────────────
 
 _searcher = None
@@ -109,7 +196,7 @@ def get_searcher():
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., max_length=2000)
     top_k: int = Field(default=10, ge=1, le=100)
     mode: str = "hybrid"  # "hybrid", "dense", "sparse"
     journal_id: str | None = None
