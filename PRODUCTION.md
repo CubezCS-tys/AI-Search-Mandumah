@@ -52,15 +52,23 @@ From your local machine:
 
 ```bash
 # Copy the project (exclude venv, node_modules, and the qdrant binary — we'll get those fresh)
+# IMPORTANT: never overwrite the server's live conversation history.
 rsync -avz --progress \
   --exclude '.venv' \
   --exclude 'frontend/node_modules' \
   --exclude 'frontend/.next' \
   --exclude 'qdrant' \
   --exclude 'snapshots' \
+  --exclude 'storage/conversations.db' \
+  --exclude 'storage/conversations.db-*' \
   /home/yassine/AI-Search-Mandumah/ \
   mandumah@YOUR_SERVER_IP:/home/mandumah/app/
 ```
+
+> The `storage/conversations.db*` excludes protect the live chat history
+> (the DB plus its WAL/SHM sidecar files) from being clobbered by your local
+> copy on every code sync. Keep them on **every** rsync that targets the app
+> directory.
 
 ---
 
@@ -75,7 +83,10 @@ rsync -avz --progress \
   mandumah@YOUR_SERVER_IP:/home/mandumah/app/output/
 
 # Transfer the Qdrant storage (8.9 MB — the already-indexed vectors)
+# Exclude the chat DB so re-running this never clobbers live history.
 rsync -avz --progress \
+  --exclude 'conversations.db' \
+  --exclude 'conversations.db-*' \
   /home/yassine/AI-Search-Mandumah/storage/ \
   mandumah@YOUR_SERVER_IP:/home/mandumah/app/storage/
 ```
