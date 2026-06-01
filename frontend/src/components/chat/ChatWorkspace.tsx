@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import type {
   ChatMessage,
+  Conversation,
   ConversationSummary,
   Source,
 } from "@/types/chat";
@@ -37,6 +38,24 @@ function syncUrl(id: string | null) {
   if (window.location.pathname !== path) {
     window.history.replaceState(null, "", path);
   }
+}
+
+/** Render a conversation thread as a portable Markdown document. */
+function conversationToMarkdown(convo: Conversation): string {
+  const lines: string[] = [`# ${convo.title || "محادثة"}`, ""];
+  for (const m of convo.messages) {
+    lines.push(m.role === "user" ? "### 🧑 المستخدم" : "### 🤖 المساعد");
+    lines.push("", m.content.trim(), "");
+    if (m.role === "assistant" && m.sources?.length) {
+      lines.push("**المصادر:**", "");
+      m.sources.forEach((s, i) => {
+        lines.push(`${i + 1}. ${s.title || s.doc_id} — \`${s.doc_id}\``);
+      });
+      lines.push("");
+    }
+    lines.push("---", "");
+  }
+  return lines.join("\n");
 }
 
 export default function ChatWorkspace({
@@ -257,6 +276,25 @@ export default function ChatWorkspace({
     [activeId, handleNewChat, refreshList],
   );
 
+  /* ── Export a conversation as Markdown ─────────────────────── */
+  const handleExport = useCallback(async (id: string) => {
+    try {
+      const convo = await getConversation(id);
+      const md = conversationToMarkdown(convo);
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(convo.title || "محادثة").replace(/[\\/:*?"<>|]/g, "_")}.md`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError("تعذّر تصدير المحادثة");
+    }
+  }, []);
+
   // Cleanup on unmount.
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -274,6 +312,7 @@ export default function ChatWorkspace({
           onSelect={loadConversation}
           onRename={handleRename}
           onDelete={handleDelete}
+          onExport={handleExport}
         />
       </div>
 
@@ -293,6 +332,7 @@ export default function ChatWorkspace({
               onSelect={loadConversation}
               onRename={handleRename}
               onDelete={handleDelete}
+              onExport={handleExport}
               onClose={() => setSidebarOpen(false)}
             />
           </div>

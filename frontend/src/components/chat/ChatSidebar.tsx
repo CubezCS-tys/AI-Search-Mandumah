@@ -10,6 +10,7 @@ import {
   Pencil,
   Check,
   X,
+  Download,
   Search as SearchIcon,
   PanelLeftClose,
 } from "lucide-react";
@@ -23,6 +24,7 @@ interface ChatSidebarProps {
   onSelect: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  onExport: (id: string) => void;
   onClose?: () => void;
 }
 
@@ -34,11 +36,13 @@ export default function ChatSidebar({
   onSelect,
   onRename,
   onDelete,
+  onExport,
   onClose,
 }: ChatSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [filter, setFilter] = useState("");
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -224,27 +228,70 @@ export default function ChatSidebar({
                     )}
 
                     {!editing && (
-                      <div className="absolute inset-y-0 left-1 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            startEdit(c);
-                          }}
-                          title="إعادة تسمية"
-                          className="flex h-6 w-6 items-center justify-center rounded bg-bg-secondary/90 text-text-muted hover:text-text-primary"
-                        >
-                          <Pencil size={12} />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDelete(c.id);
-                          }}
-                          title="حذف"
-                          className="flex h-6 w-6 items-center justify-center rounded bg-bg-secondary/90 text-text-muted hover:text-red-600"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                      <div className="absolute inset-y-0 left-1 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100 has-[button:focus]:opacity-100">
+                        {confirmingId === c.id ? (
+                          <>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmingId(null);
+                                onDelete(c.id);
+                              }}
+                              title="تأكيد الحذف"
+                              aria-label="تأكيد الحذف"
+                              className="flex h-6 w-6 items-center justify-center rounded bg-red-600 text-white hover:bg-red-700"
+                            >
+                              <Check size={12} />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmingId(null);
+                              }}
+                              title="إلغاء"
+                              aria-label="إلغاء الحذف"
+                              className="flex h-6 w-6 items-center justify-center rounded bg-bg-secondary/90 text-text-muted hover:text-text-primary"
+                            >
+                              <X size={12} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onExport(c.id);
+                              }}
+                              title="تصدير المحادثة"
+                              aria-label="تصدير المحادثة"
+                              className="flex h-6 w-6 items-center justify-center rounded bg-bg-secondary/90 text-text-muted hover:text-text-primary"
+                            >
+                              <Download size={12} />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startEdit(c);
+                              }}
+                              title="إعادة تسمية"
+                              aria-label="إعادة تسمية"
+                              className="flex h-6 w-6 items-center justify-center rounded bg-bg-secondary/90 text-text-muted hover:text-text-primary"
+                            >
+                              <Pencil size={12} />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmingId(c.id);
+                              }}
+                              title="حذف"
+                              aria-label="حذف"
+                              className="flex h-6 w-6 items-center justify-center rounded bg-bg-secondary/90 text-text-muted hover:text-red-600"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     )}
                   </li>
