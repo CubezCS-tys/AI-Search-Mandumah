@@ -139,6 +139,7 @@ class SearchResponse(BaseModel):
     search_ms: float
     low_confidence: bool = False
     warning: str | None = None
+    suggestions: list[str] = []
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
@@ -246,6 +247,25 @@ async def search(req: SearchRequest):
             "جرّب إيقاف HyDE أو تضييق الاستعلام أو استخدام كلمات أكثر تحديداً."
         )
 
+    # When confidence is low, surface adjacent corpus topics ("هل تقصد") drawn
+    # from the titles that did surface, so the user can pivot to a real query.
+    suggestions: list[str] = []
+    if low_confidence and results:
+        seen_titles: set[str] = set()
+        for r in results:
+            title = (getattr(r, "title", "") or "").strip()
+            if not title:
+                continue
+            # Trim overly long titles to a clickable-length phrase.
+            phrase = title if len(title) <= 80 else title[:80].rsplit(" ", 1)[0] + "…"
+            key = phrase.lower()
+            if key in seen_titles:
+                continue
+            seen_titles.add(key)
+            suggestions.append(phrase)
+            if len(suggestions) >= 3:
+                break
+
     return SearchResponse(
         query=req.query,
         mode=req.mode,
@@ -267,6 +287,7 @@ async def search(req: SearchRequest):
         search_ms=search_ms,
         low_confidence=low_confidence,
         warning=warning,
+        suggestions=suggestions,
     )
 
 

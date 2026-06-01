@@ -286,6 +286,26 @@ function SearchPageContent() {
                 {data.warning}
               </div>
             )}
+            {data.low_confidence &&
+              data.suggestions &&
+              data.suggestions.length > 0 && (
+                <div className="mb-4 rounded-2xl border border-border-subtle bg-bg-elevated px-4 py-3">
+                  <p className="mb-2 font-arabic text-[13px] text-text-muted">
+                    هل تقصد أحد هذه المواضيع؟
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {data.suggestions.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => handleSearch(s, mode, hydeEnabled)}
+                        className="rounded-full border border-border bg-bg-primary px-3 py-1.5 font-arabic text-[13px] text-text-primary transition hover:border-accent hover:text-accent"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             {!synthesisActive && data.results.length > 0 && (
               <SearchFacets
                 results={data.results}

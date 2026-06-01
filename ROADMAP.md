@@ -15,7 +15,7 @@ See `.github/copilot-instructions.md` for the autonomy + verification contract.
 
 - [x] Show which retrieved chunks were actually cited vs. merely retrieved.
 - [x] Per-answer "regenerate" and "more sources" controls in chat.
-- [ ] Query suggestions / "هل تقصد" when results are low-confidence.
+- [x] Query suggestions / "هل تقصد" when results are low-confidence.
 - [x] Streaming partial sources (show sources as soon as retrieval finishes, before the answer completes).
 
 ## Pass 5 — Production & multi-user

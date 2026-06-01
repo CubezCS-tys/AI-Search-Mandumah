@@ -45,6 +45,7 @@ export interface SearchResponse {
   search_ms: number;
   low_confidence?: boolean;
   warning?: string | null;
+  suggestions?: string[];
 }
 
 export interface HealthResponse {
