@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";import ReactMarkdown from "react-markdown";
+import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Sparkles, User, Copy, Check } from "lucide-react";
+import { Sparkles, User, Copy, Check, Search } from "lucide-react";
 import type { ChatMessage, Source } from "@/types/chat";
 import SourcesList from "./SourcesList";
 
@@ -25,6 +26,8 @@ interface AssistantMessageProps {
   streaming?: boolean;
   retrieving?: boolean;
   query?: string;
+  /** The user question this answer responds to — powers the "search this" action. */
+  userQuery?: string;
 }
 
 /** Subtle "searching the corpus" status row shown before the first token. */
@@ -199,7 +202,23 @@ function CitedAnswer({ content, sources }: CitedAnswerProps) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: CitationLink }}>{md}</ReactMarkdown>;
 }
 
-function AssistantMessage({ content, sources, streaming, retrieving, query }: AssistantMessageProps) {
+/** Link button that jumps to structured Search for a question. */
+function SearchButton({ query }: { query: string }) {
+  const router = useRouter();
+  return (
+    <button
+      onClick={() => router.push(`/search?q=${encodeURIComponent(query)}`)}
+      aria-label="ابحث عن هذا"
+      title="ابحث عن هذا"
+      className="mt-2 flex items-center gap-1 rounded-md px-1.5 py-1 font-arabic text-[12px] text-text-muted transition hover:text-text-primary"
+    >
+      <Search size={14} />
+      <span>ابحث عن هذا</span>
+    </button>
+  );
+}
+
+function AssistantMessage({ content, sources, streaming, retrieving, query, userQuery }: AssistantMessageProps) {
   const body = useMemo(
     () => <CitedAnswer content={content} sources={sources ?? []} />,
     [content, sources],
@@ -226,7 +245,12 @@ function AssistantMessage({ content, sources, streaming, retrieving, query }: As
         {sources && sources.length > 0 && (
           <SourcesList sources={sources} query={query} />
         )}
-        {!streaming && content.length > 0 && <CopyButton content={content} />}
+        {!streaming && content.length > 0 && (
+          <div className="flex items-center gap-1">
+            <CopyButton content={content} />
+            {userQuery && <SearchButton query={userQuery} />}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -276,6 +300,11 @@ export default function ChatMessages({
             streaming={streamingIndex === i}
             retrieving={streamingIndex === i && isRetrieving}
             query={rootQuery}
+            userQuery={
+              i > 0 && messages[i - 1].role === "user"
+                ? messages[i - 1].content
+                : undefined
+            }
           />
         ),
       )}

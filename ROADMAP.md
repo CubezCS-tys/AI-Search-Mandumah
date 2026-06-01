@@ -5,7 +5,7 @@ See `.github/copilot-instructions.md` for the autonomy + verification contract.
 
 ## Pass 3 — UX depth (next up)
 
-- [ ] **Search ↔ Chat handoffs**: "اسأل في المحادثة" button on search results that opens Chat seeded with the query + selected results; and a "ابحث عن هذا" action from a chat answer.
+- [x] **Search ↔ Chat handoffs**: "اسأل في المحادثة" button on search results that opens Chat seeded with the query + selected results; and a "ابحث عن هذا" action from a chat answer.
 - [ ] **Faceted filters on search**: journal and section facets with result counts, driven by the existing filter params.
 - [ ] **Mobile responsive**: chat sidebar collapses to a drawer; document split-view stacks; composer and result cards adapt to small screens.
 - [ ] **In-PDF find**: a find-in-document box in `DocumentViewer` reusing the OCR word index + existing highlight overlay.

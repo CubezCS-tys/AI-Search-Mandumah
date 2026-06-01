@@ -7,6 +7,7 @@ import {
   useCallback,
   useLayoutEffect,
 } from "react";
+import { useSearchParams } from "next/navigation";
 import { PanelLeft, AlertCircle } from "lucide-react";
 import {
   streamCorpusChat,
@@ -41,6 +42,7 @@ function syncUrl(id: string | null) {
 export default function ChatWorkspace({
   initialConversationId,
 }: ChatWorkspaceProps) {
+  const searchParams = useSearchParams();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(
@@ -59,6 +61,7 @@ export default function ChatWorkspace({
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const seededRef = useRef(false);
 
   const rootQuery = messages.find((m) => m.role === "user")?.content;
 
@@ -217,6 +220,17 @@ export default function ChatWorkspace({
     setIsRetrieving(false);
     refreshList();
   }, [refreshList]);
+
+  /* ── Seed from a search handoff (/chat?q=...) ──────────────── */
+  useEffect(() => {
+    if (seededRef.current || initialConversationId) return;
+    const seed = searchParams.get("q")?.trim();
+    if (!seed) return;
+    seededRef.current = true;
+    // Strip the query param so a refresh doesn't re-send the message.
+    window.history.replaceState(null, "", "/chat");
+    handleSend(seed);
+  }, [searchParams, initialConversationId, handleSend]);
 
   /* ── Rename / delete ───────────────────────────────────────── */
   const handleRename = useCallback(async (id: string, title: string) => {

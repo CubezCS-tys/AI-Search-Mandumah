@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { MessageSquare } from "lucide-react";
 import Header from "@/components/layout/Header";
 import SearchBar from "@/components/search/SearchBar";
 import SearchFilters from "@/components/search/SearchFilters";
@@ -248,6 +249,17 @@ function SearchPageContent() {
               />
             )}
           </div>
+          {query && data && !isLoading && (
+            <button
+              onClick={() =>
+                router.push(`/chat?q=${encodeURIComponent(query)}`)
+              }
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-bg-elevated px-3 py-1.5 font-arabic text-[12px] font-medium text-text-muted transition hover:border-accent/40 hover:text-accent"
+            >
+              <MessageSquare size={13} />
+              اسأل في المحادثة
+            </button>
+          )}
         </div>
 
         {/* Error state */}

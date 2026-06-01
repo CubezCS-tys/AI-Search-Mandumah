@@ -1,5 +1,10 @@
+import { Suspense } from "react";
 import ChatWorkspace from "@/components/chat/ChatWorkspace";
 
 export default function ChatPage() {
-  return <ChatWorkspace />;
+  return (
+    <Suspense>
+      <ChatWorkspace />
+    </Suspense>
+  );
 }
