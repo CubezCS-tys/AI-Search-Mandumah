@@ -43,9 +43,12 @@ class DocumentErrorBoundary extends Component<
 function DocumentContent({ docId }: { docId: string }) {
   const searchParams = useSearchParams();
   const query = searchParams.get("q") || "";
+  const citeParam = searchParams.get("cite") || "";
   const [chatOpen, setChatOpen] = useState(false);
   const [ripple, setRipple] = useState<{ x: number; y: number } | null>(null);
-  const [citationText, setCitationText] = useState<string | null>(null);
+  // Seed from a deep-linked citation (e.g. a corpus-chat «quote») so the viewer
+  // highlights the passage as soon as the document's OCR loads.
+  const [citationText, setCitationText] = useState<string | null>(citeParam || null);
   const [citationKey, setCitationKey] = useState(0);
   const [citationNotFound, setCitationNotFound] = useState(false);
   const [selectedText, setSelectedText] = useState<string | null>(null);

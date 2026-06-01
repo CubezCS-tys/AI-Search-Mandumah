@@ -7,6 +7,8 @@ export interface Source {
   snippet: string;
   section: string;
   journal_id: string;
+  /** Full retrieved chunk text — used to map a clicked «quote» to its source. */
+  text?: string;
 }
 
 export type ChatRole = "user" | "assistant";

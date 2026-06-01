@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Sparkles, User, Copy, Check } from "lucide-react";
-import type { ChatMessage } from "@/types/chat";
+import type { ChatMessage, Source } from "@/types/chat";
 import SourcesList from "./SourcesList";
 
 const MARKDOWN_CLASSES =
@@ -67,14 +67,142 @@ function CopyButton({ content }: { content: string }) {
   );
 }
 
+/* ── Clickable citations ─────────────────────────────────────────────
+ * The model wraps verbatim evidence in «guillemets» and may name a source
+ * as (المستند [N]). We turn both into clickable links that deep-link into
+ * the source document, where the existing viewer highlights the passage.
+ */
+
+/** Normalize Arabic text for tolerant substring matching (tashkeel + punctuation). */
+function normalizeArabic(s: string): string {
+  return s
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
+    .replace(/[.,،؛:؟!()[\]{}«»"'\-–—٪%/\\]/g, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Rewrite an answer's markdown so citations become links:
+ *   «quote»          → [«quote»](#q-<i>)   (i indexes into the returned quotes[])
+ *   (المستند [N])    → [المستند N](#s-N)
+ * Returns the rewritten markdown plus the ordered list of raw quote strings.
+ */
+function prepareCitations(content: string): { md: string; quotes: string[] } {
+  const quotes: string[] = [];
+  // Source markers first, so the quote pass doesn't touch them.
+  let md = content.replace(
+    /\(\s*المستند\s*\[?\s*(\d+)\s*\]?\s*\)/g,
+    (_m, n: string) => ` [المستند ${n}](#s-${n})`,
+  );
+  // Verbatim guillemet quotes.
+  md = md.replace(/«([^»]+)»/g, (_m, q: string) => {
+    const raw = q.trim();
+    const i = quotes.length;
+    quotes.push(raw);
+    // Strip brackets from the visible text so markdown link parsing stays valid.
+    const safe = raw.replace(/[[\]]/g, "");
+    return `[«${safe}»](#q-${i})`;
+  });
+  return { md, quotes };
+}
+
+/** Pick the source document a quote came from (substring match, with fallback). */
+function resolveDocId(quote: string, sources: Source[]): string | null {
+  if (!sources.length) return null;
+  const nq = normalizeArabic(quote);
+  if (nq) {
+    for (const s of sources) {
+      if (s.text && normalizeArabic(s.text).includes(nq)) return s.doc_id;
+    }
+    for (const s of sources) {
+      if (s.snippet && normalizeArabic(s.snippet).includes(nq)) return s.doc_id;
+    }
+  }
+  return sources[0].doc_id; // fall back to the top-ranked source
+}
+
+interface CitedAnswerProps {
+  content: string;
+  sources: Source[];
+}
+
+/** Renders an assistant answer with clickable verbatim-quote / source citations. */
+function CitedAnswer({ content, sources }: CitedAnswerProps) {
+  const router = useRouter();
+
+  const { md, quotes } = useMemo(() => prepareCitations(content), [content]);
+
+  // Refs keep the custom link renderer identity stable across streaming
+  // re-renders (avoids ReactMarkdown DOM reconciliation crashes), while still
+  // reading the latest quotes/sources on click.
+  const quotesRef = useRef(quotes);
+  const sourcesRef = useRef(sources);
+  const routerRef = useRef(router);
+  useEffect(() => { quotesRef.current = quotes; }, [quotes]);
+  useEffect(() => { sourcesRef.current = sources; }, [sources]);
+  useEffect(() => { routerRef.current = router; }, [router]);
+
+  const CitationLink = useMemo(
+    () =>
+      function CitationLinkInner({ href, children }: { href?: string; children?: ReactNode }) {
+        if (href?.startsWith("#q-")) {
+          const i = parseInt(href.slice(3), 10);
+          return (
+            <button
+              type="button"
+              title="افتح المصدر"
+              onClick={(e) => {
+                e.preventDefault();
+                const quote = quotesRef.current[i];
+                if (!quote) return;
+                const docId = resolveDocId(quote, sourcesRef.current);
+                if (!docId) return;
+                routerRef.current.push(
+                  `/document/${encodeURIComponent(docId)}?cite=${encodeURIComponent(quote)}`,
+                );
+              }}
+              className="mx-px cursor-pointer rounded px-0.5 font-medium text-accent underline decoration-dotted decoration-accent/50 underline-offset-2 transition-colors hover:bg-accent/[0.06] hover:decoration-solid"
+            >
+              {children}
+            </button>
+          );
+        }
+        if (href?.startsWith("#s-")) {
+          const n = parseInt(href.slice(3), 10);
+          return (
+            <button
+              type="button"
+              title="افتح المستند"
+              onClick={(e) => {
+                e.preventDefault();
+                const src = sourcesRef.current[n - 1];
+                if (!src) return;
+                routerRef.current.push(`/document/${encodeURIComponent(src.doc_id)}`);
+              }}
+              className="mx-0.5 inline-flex cursor-pointer items-center rounded bg-accent/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-accent no-underline transition-colors hover:bg-accent hover:text-white"
+            >
+              {children}
+            </button>
+          );
+        }
+        return (
+          <a href={href} target="_blank" rel="noreferrer" className="text-accent underline">
+            {children}
+          </a>
+        );
+      },
+    [],
+  );
+
+  return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: CitationLink }}>{md}</ReactMarkdown>;
+}
+
 function AssistantMessage({ content, sources, streaming, retrieving, query }: AssistantMessageProps) {
-  // Memoize the markdown body so the parsed tree is stable across re-renders
-  // (only re-parses when content changes), avoiding reconciliation crashes.
   const body = useMemo(
-    () => (
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-    ),
-    [content],
+    () => <CitedAnswer content={content} sources={sources ?? []} />,
+    [content, sources],
   );
 
   const showRetrieval = retrieving && content.length === 0;

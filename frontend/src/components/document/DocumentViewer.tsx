@@ -625,6 +625,9 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
   // Auto-scroll to first citation match
   useEffect(() => {
     if (!citationText) return;
+    // Wait for OCR before judging a citation missing — otherwise a deep-linked
+    // citation would fire a false "not found" toast before the page text loads.
+    if (!ocrData?.pages?.length) return;
     if (!citationMatchIds.size) {
       onCitationNotFound?.();
       return;
@@ -636,7 +639,7 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 100);
     return () => clearTimeout(t);
-  }, [citationMatchIds, citationText, citationKey, onCitationNotFound]);
+  }, [citationMatchIds, citationText, citationKey, onCitationNotFound, ocrData]);
 
   // Fetch OCR data
   useEffect(() => {

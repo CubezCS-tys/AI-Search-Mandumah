@@ -136,13 +136,17 @@ def _build_sources(results: list[Any]) -> list[dict[str, Any]]:
     """Deduplicate retrieved results by doc_id, keeping the best score."""
     best: dict[str, dict[str, Any]] = {}
     for r in results:
-        snippet = (r.text or "").strip()[:SNIPPET_CHARS]
+        text = (r.text or "").strip()[:MAX_CHUNK_CHARS]
+        snippet = text[:SNIPPET_CHARS]
         entry = {
             "doc_id": r.doc_id,
             "title": r.title or r.doc_id,
             "chunk_id": r.chunk_id,
             "score": round(float(r.score), 4),
             "snippet": snippet,
+            # Full retrieved chunk text — lets the UI map a clicked «quote»
+            # back to the document it came from for deep-link highlighting.
+            "text": text,
             "section": r.section or "",
             "journal_id": r.journal_id or "",
         }
