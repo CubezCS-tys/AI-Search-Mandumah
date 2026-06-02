@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
-import { Inter, Tajawal } from "next/font/google";
+import { Inter, Tajawal, Amiri, El_Messiri, Playfair_Display } from "next/font/google";
 import "./globals.css";
+import "./variants/editorial.css";
+import "./variants/saas.css";
+import "./variants/luxe.css";
+import VariantSwitcher from "@/components/layout/VariantSwitcher";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -12,6 +16,30 @@ const tajawal = Tajawal({
   variable: "--font-tajawal",
   subsets: ["arabic", "latin"],
   weight: ["300", "400", "500", "700", "800"],
+  display: "swap",
+});
+
+/* Arabic serif (Naskh) — classic, journal-like headings. */
+const amiri = Amiri({
+  variable: "--font-amiri",
+  subsets: ["arabic", "latin"],
+  weight: ["400", "700"],
+  display: "swap",
+});
+
+/* Elegant modern Arabic display face — refined yet contemporary. */
+const elMessiri = El_Messiri({
+  variable: "--font-elmessiri",
+  subsets: ["arabic", "latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+/* Latin editorial serif for numerals/Latin headings. */
+const playfair = Playfair_Display({
+  variable: "--font-playfair",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -28,18 +56,20 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl" suppressHydrationWarning>
       <head>
-        {/* Apply the saved theme before paint to avoid a flash of the wrong theme.
-            Defaults to light; dark is opt-in via the header toggle. */}
+        {/* Apply the saved theme + design variant before paint to avoid a flash
+            of the wrong skin. Theme defaults to light; variant defaults to
+            "editorial". Both are opt-in/persisted via the on-screen controls. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{if(localStorage.getItem("theme")==="dark")document.documentElement.classList.add("dark");}catch(e){}})();`,
+            __html: `(function(){try{var d=document.documentElement;if(localStorage.getItem("theme")==="dark")d.classList.add("dark");var v=localStorage.getItem("ui-variant")||"editorial";d.classList.add("variant-"+v);}catch(e){d.classList.add("variant-editorial");}})();`,
           }}
         />
       </head>
       <body
-        className={`${inter.variable} ${tajawal.variable} antialiased`}
+        className={`${inter.variable} ${tajawal.variable} ${amiri.variable} ${elMessiri.variable} ${playfair.variable} antialiased`}
       >
         {children}
+        <VariantSwitcher />
       </body>
     </html>
   );

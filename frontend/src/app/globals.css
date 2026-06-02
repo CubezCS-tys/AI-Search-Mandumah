@@ -72,7 +72,27 @@
   --font-arabic: var(--font-tajawal);
 }
 
-/* ── Base ────────────────────────────────────────────────────── */
+/* ── Design variants ─────────────────────────────────────────────
+   Three competing "premium" looks live in app/variants/*.css, imported
+   in layout.tsx. Each is scoped under a `variant-*` class on <html> and
+   overrides the base tokens above (and the .dark overrides) via higher
+   specificity, so every token-based component re-skins automatically.
+   Switch live with the on-screen VariantSwitcher.
+
+   Shared knob each variant may set:
+     --font-heading  → headings / display text
+   Available faces (loaded in layout.tsx):
+     var(--font-tajawal)   Tajawal     (sans, default body)
+     var(--font-amiri)     Amiri       (Arabic Naskh serif)
+     var(--font-elmessiri) El Messiri  (elegant Arabic display)
+     var(--font-playfair)  Playfair    (Latin editorial serif)
+   ──────────────────────────────────────────────────────────────── */
+
+/* Headings opt into the variant heading font when one is set. */
+:where(h1, h2, h3, .heading-display) {
+  font-family: var(--font-heading, var(--font-tajawal)), var(--font-tajawal),
+    system-ui, sans-serif;
+}
 
 * {
   border-color: var(--border);
