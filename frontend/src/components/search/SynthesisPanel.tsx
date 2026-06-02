@@ -29,7 +29,7 @@ type State = "idle" | "streaming" | "done" | "error";
 const MODE_TOGGLE_BASE =
   "inline-flex h-8 items-center gap-1.5 rounded-full px-4 text-[12px] font-arabic font-medium transition-all duration-150";
 const MODE_TOGGLE_ACTIVE =
-  "bg-white text-rose-700 shadow-sm ring-1 ring-rose-200 translate-y-[-0.5px]";
+  "bg-bg-elevated text-accent shadow-sm ring-1 ring-accent/20 translate-y-[-0.5px]";
 const MODE_TOGGLE_INACTIVE =
   "border border-transparent bg-transparent text-text-muted hover:border-border hover:bg-bg-primary hover:text-text-primary";
 

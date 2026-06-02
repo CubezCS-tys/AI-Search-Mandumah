@@ -22,7 +22,7 @@ class DocumentErrorBoundary extends Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-svh flex items-center justify-center bg-white" dir="rtl">
+        <div className="min-h-svh flex items-center justify-center bg-bg-primary" dir="rtl">
           <div className="text-center space-y-3 max-w-md px-6">
             <p className="text-lg font-bold text-red-600 font-arabic">حدث خطأ غير متوقع</p>
             <p className="text-sm text-text-muted font-arabic">{this.state.error?.message}</p>
@@ -107,7 +107,7 @@ function DocumentContent({ docId }: { docId: string }) {
   }, [chatOpen]);
 
   return (
-    <div className="min-h-svh bg-white">
+    <div className="min-h-svh bg-bg-primary">
       <Header compact />
 
       {/* Ripple overlay — multiple expanding rings */}
@@ -172,7 +172,7 @@ function DocumentContent({ docId }: { docId: string }) {
       {/* Chat panel — full-width drawer on mobile, 45% side split on desktop */}
       {chatOpen && (
       <div
-        className="fixed top-13 right-0 bottom-0 z-50 w-full border-l border-border/60 bg-white shadow-[-8px_0_30px_rgba(0,0,0,0.08)] lg:w-[45%]"
+        className="fixed top-13 right-0 bottom-0 z-50 w-full border-l border-border/60 bg-bg-elevated shadow-[-8px_0_30px_rgba(0,0,0,0.08)] lg:w-[45%]"
         style={{
           animation: "chat-slide-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both",
         }}

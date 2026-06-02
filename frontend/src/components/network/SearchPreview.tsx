@@ -168,12 +168,12 @@ export default function SearchPreview({ results, networkRef, active }: Props) {
                   >
                     #{i + 1}
                   </span>
-                  <span className="text-[10px] text-gray-400 font-mono">
+                  <span className="text-[10px] text-text-muted font-mono">
                     {r.score.toFixed(4)}
                   </span>
                 </div>
                 <p
-                  className="text-[12px] font-bold text-gray-800 leading-tight"
+                  className="text-[12px] font-bold text-text-primary leading-tight"
                   dir="rtl"
                   style={{
                     display: "-webkit-box",
@@ -185,7 +185,7 @@ export default function SearchPreview({ results, networkRef, active }: Props) {
                   {r.title}
                 </p>
                 <p
-                  className="text-[10px] text-gray-500 mt-0.5 leading-snug"
+                  className="text-[10px] text-text-muted mt-0.5 leading-snug"
                   dir="rtl"
                   style={{
                     display: "-webkit-box",

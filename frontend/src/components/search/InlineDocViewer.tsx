@@ -60,11 +60,11 @@ export default function InlineDocViewer({
   const pages = Array.from({ length: lastValid }, (_, i) => i + 1);
 
   return (
-    <div className="flex flex-col rounded-xl border border-border-subtle bg-white overflow-hidden flex-1 min-h-0">
+    <div className="flex flex-col rounded-xl border border-border-subtle bg-bg-elevated overflow-hidden flex-1 min-h-0">
       {/* Scrollable page stack */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto bg-gray-100 p-2 space-y-2"
+        className="flex-1 min-h-0 overflow-y-auto bg-bg-secondary p-2 space-y-2"
       >
         {pages.map((p) => (
           <PageThumb
@@ -81,7 +81,7 @@ export default function InlineDocViewer({
       </div>
 
       {/* Compact page indicator */}
-      <div className="flex items-center justify-center border-t border-border-subtle px-3 py-1 bg-white">
+      <div className="flex items-center justify-center border-t border-border-subtle px-3 py-1 bg-bg-elevated">
         <span className="text-[10px] tabular-nums text-text-muted" dir="ltr">
           {currentPage} / {lastValid}
         </span>
@@ -109,7 +109,7 @@ const PageThumb = React.forwardRef<
       className="relative rounded-lg overflow-hidden bg-white shadow-sm"
     >
       {loading && (
-        <div className="absolute inset-0 flex items-center justify-center z-10 bg-gray-50">
+        <div className="absolute inset-0 flex items-center justify-center z-10 bg-bg-secondary">
           <Loader2 size={14} className="animate-spin text-rose-300" />
         </div>
       )}

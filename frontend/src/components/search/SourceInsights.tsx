@@ -118,7 +118,7 @@ export default function SourceInsights({ result, query }: SourceInsightsProps) {
 
   /* ── Compact info strip — just essentials ── */
   return (
-    <div className="rounded-lg border border-border-subtle bg-white px-3 py-2.5 space-y-1.5" dir="rtl">
+    <div className="rounded-lg border border-border-subtle bg-bg-elevated px-3 py-2.5 space-y-1.5" dir="rtl">
       {/* Title + author row */}
       <div className="flex items-start gap-2">
         <Sparkles size={12} className="text-rose-500 shrink-0 mt-0.5" />

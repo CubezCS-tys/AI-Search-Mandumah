@@ -467,7 +467,7 @@ export default function DocumentPreview({
 
   return (
     <div
-      className="sticky top-[105px] flex flex-col rounded-2xl border border-border bg-white shadow-sm"
+      className="sticky top-[105px] flex flex-col rounded-2xl border border-border bg-bg-elevated shadow-sm"
       style={{ maxHeight: "calc(100vh - 120px)" }}
     >
       {/* Header */}
@@ -487,7 +487,7 @@ export default function DocumentPreview({
               setManualZoom(true);
               setZoom((z) => Math.max(0.15, z - 0.05));
             }}
-            className="rounded p-1 text-text-muted hover:bg-gray-100 transition"
+            className="rounded p-1 text-text-muted hover:bg-bg-secondary transition"
           >
             <ZoomOut size={13} />
           </button>
@@ -499,7 +499,7 @@ export default function DocumentPreview({
               setManualZoom(true);
               setZoom((z) => Math.min(1.2, z + 0.05));
             }}
-            className="rounded p-1 text-text-muted hover:bg-gray-100 transition"
+            className="rounded p-1 text-text-muted hover:bg-bg-secondary transition"
           >
             <ZoomIn size={13} />
           </button>
@@ -512,7 +512,7 @@ export default function DocumentPreview({
         </Link>
         <button
           onClick={onClose}
-          className="rounded-lg p-1.5 text-text-muted hover:bg-gray-100 transition"
+          className="rounded-lg p-1.5 text-text-muted hover:bg-bg-secondary transition"
           title="إغلاق"
         >
           <X size={14} />
