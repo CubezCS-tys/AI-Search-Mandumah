@@ -8,9 +8,10 @@ import {
   Sparkles, X, RefreshCw, Loader2, AlertCircle, Zap, FlaskConical,
   Copy, Check, Download, ListTree, ExternalLink, BookOpen, Quote, Clock, ChevronDown,
   Microscope, TrendingUp, Target, FlaskRound, Users, ShieldAlert,
+  Scale, Table2, ThumbsUp, ThumbsDown, GitCompareArrows, Minus,
 } from "lucide-react";
 import { streamSynthesis } from "@/lib/api";
-import type { SearchMode, SearchResultItem, SynthesisMode, EvidenceDoc } from "@/types/search";
+import type { SearchMode, SearchResultItem, SynthesisMode, EvidenceDoc, EvidenceStance } from "@/types/search";
 
 interface SynthesisPanelProps {
   query: string;
@@ -81,6 +82,154 @@ function qualityLabel(q?: string): string {
   return map[q.toLowerCase()] ?? q;
 }
 
+/* ── Stance helpers (Consensus / Scite style) ──────────────────────────── */
+const STANCE_META: Record<EvidenceStance, { label: string; chip: string; bar: string; Icon: typeof ThumbsUp }> = {
+  support: { label: "داعم", chip: "bg-emerald-100 text-emerald-700", bar: "bg-emerald-500", Icon: ThumbsUp },
+  contrast: { label: "معارض", chip: "bg-rose-100 text-rose-700", bar: "bg-rose-500", Icon: ThumbsDown },
+  mixed: { label: "متباين", chip: "bg-amber-100 text-amber-700", bar: "bg-amber-500", Icon: GitCompareArrows },
+  neutral: { label: "محايد", chip: "bg-bg-secondary text-text-secondary", bar: "bg-text-muted/50", Icon: Minus },
+};
+
+function stanceOf(d: EvidenceDoc): EvidenceStance {
+  return (d.stance && d.stance in STANCE_META ? d.stance : "neutral") as EvidenceStance;
+}
+
+/** Corpus-level agreement meter derived from per-document stances. */
+function AgreementMeter({ evidence }: { evidence: EvidenceDoc[] }) {
+  const counts = useMemo(() => {
+    const c: Record<EvidenceStance, number> = { support: 0, contrast: 0, mixed: 0, neutral: 0 };
+    for (const d of evidence) c[stanceOf(d)] += 1;
+    return c;
+  }, [evidence]);
+
+  const total = evidence.length || 1;
+  const decisive = counts.support + counts.contrast + counts.mixed;
+  const verdict = (() => {
+    if (decisive === 0) return { text: "المصادر وصفية ولا تحسم السؤال", tone: "text-text-secondary" };
+    if (counts.support >= counts.contrast * 2 && counts.support > 0)
+      return { text: "تميل المصادر إلى دعم الفرضية", tone: "text-emerald-600" };
+    if (counts.contrast >= counts.support * 2 && counts.contrast > 0)
+      return { text: "تميل المصادر إلى معارضة الفرضية", tone: "text-rose-600" };
+    return { text: "الأدلة متضاربة بين المصادر", tone: "text-amber-600" };
+  })();
+
+  const order: EvidenceStance[] = ["support", "mixed", "contrast", "neutral"];
+
+  return (
+    <div className="rounded-xl border border-border-subtle bg-bg-elevated px-3.5 py-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 font-arabic text-[12px] font-semibold text-text-primary">
+          <Scale size={13} className="text-accent" /> ميزان الأدلة
+        </span>
+        <span className={`font-arabic text-[12px] font-medium ${verdict.tone}`}>{verdict.text}</span>
+      </div>
+      {/* Stacked bar */}
+      <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-bg-secondary">
+        {order.map((s) =>
+          counts[s] > 0 ? (
+            <div
+              key={s}
+              className={STANCE_META[s].bar}
+              style={{ width: `${(counts[s] / total) * 100}%` }}
+              title={`${STANCE_META[s].label}: ${counts[s]}`}
+            />
+          ) : null,
+        )}
+      </div>
+      {/* Legend */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        {order.map((s) => (
+          <span key={s} className="flex items-center gap-1 font-arabic text-[11px] text-text-muted">
+            <span className={`h-2 w-2 rounded-full ${STANCE_META[s].bar}`} />
+            {STANCE_META[s].label} <span dir="ltr" className="tabular-nums">{counts[s]}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Cross-source comparison matrix (Undermind / SciSpace style). */
+function ComparisonMatrix({
+  evidence,
+  onCitationClick,
+}: {
+  evidence: EvidenceDoc[];
+  onCitationClick?: (zeroBasedIndex: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (evidence.length < 2) return null;
+
+  return (
+    <div className="rounded-xl border border-border-subtle bg-bg-elevated">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between px-3.5 py-2.5">
+        <span className="flex items-center gap-2 font-arabic text-[13px] font-semibold text-text-primary">
+          <Table2 size={14} className="text-accent" /> مقارنة المصادر
+          <span className="rounded-full bg-bg-secondary px-1.5 py-0.5 text-[10px] text-text-muted" dir="ltr">
+            {evidence.length}
+          </span>
+        </span>
+        <ChevronDown size={15} className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="overflow-x-auto px-2.5 pb-3 pt-1">
+          <table className="w-full border-collapse text-right font-arabic text-[11.5px]" dir="rtl">
+            <thead>
+              <tr className="text-text-muted">
+                {["#", "المصدر", "المنهجية", "العينة", "أبرز نتيجة", "الموقف", "الجودة"].map((h) => (
+                  <th key={h} className="whitespace-nowrap border-b border-border-subtle px-2 py-1.5 text-[10.5px] font-semibold">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {evidence.map((d) => {
+                const st = STANCE_META[stanceOf(d)];
+                const finding = d.key_findings?.[0]?.claim;
+                return (
+                  <tr key={`${d.doc_index}-${d.doc_id}`} className="align-top hover:bg-bg-secondary/40">
+                    <td className="border-b border-border-subtle px-2 py-2">
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded bg-accent px-1 text-[11px] font-bold text-white" dir="ltr">
+                        {d.doc_index}
+                      </span>
+                    </td>
+                    <td className="max-w-[160px] border-b border-border-subtle px-2 py-2">
+                      <button
+                        onClick={() => onCitationClick?.(d.doc_index - 1)}
+                        className="text-right font-semibold leading-snug text-text-primary line-clamp-2 hover:text-accent"
+                      >
+                        {d.title || d.doc_id}
+                      </button>
+                    </td>
+                    <td className="max-w-[150px] border-b border-border-subtle px-2 py-2 text-text-secondary line-clamp-2">
+                      {d.methodology || "—"}
+                    </td>
+                    <td className="max-w-[120px] border-b border-border-subtle px-2 py-2 text-text-secondary line-clamp-2">
+                      {d.sample || "—"}
+                    </td>
+                    <td className="max-w-[200px] border-b border-border-subtle px-2 py-2 text-text-secondary line-clamp-3">
+                      {finding || "—"}
+                    </td>
+                    <td className="border-b border-border-subtle px-2 py-2">
+                      <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-[10.5px] font-medium ${st.chip}`}>
+                        <st.Icon size={11} /> {st.label}
+                      </span>
+                    </td>
+                    <td className="border-b border-border-subtle px-2 py-2 text-text-muted">
+                      {qualityLabel(d.evidence_quality) || "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Structured evidence cards extracted per document in advanced mode. */
 function EvidenceCards({
   evidence,
@@ -126,6 +275,11 @@ function EvidenceCards({
                   </button>
                   <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-text-muted">
                     <span dir="ltr" className="font-mono">{d.doc_id}</span>
+                    {(() => { const st = STANCE_META[stanceOf(d)]; return (
+                      <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium ${st.chip}`}>
+                        <st.Icon size={10} /> {st.label}
+                      </span>
+                    ); })()}
                     {d.evidence_quality && (
                       <span className={`rounded px-1.5 py-0.5 font-medium ${QUALITY_STYLE[d.evidence_quality.toLowerCase()] ?? "bg-bg-secondary text-text-secondary"}`}>
                         {qualityLabel(d.evidence_quality)}
@@ -645,7 +799,11 @@ export default function SynthesisPanel({
 
       {/* Structured evidence cards (advanced mode) */}
       {state !== "error" && evidence.length > 0 && (
-        <EvidenceCards evidence={evidence} query={query} onCitationClick={onCitationClick} />
+        <>
+          <AgreementMeter evidence={evidence} />
+          <ComparisonMatrix evidence={evidence} onCitationClick={onCitationClick} />
+          <EvidenceCards evidence={evidence} query={query} onCitationClick={onCitationClick} />
+        </>
       )}
 
       {/* References / generated bibliography */}

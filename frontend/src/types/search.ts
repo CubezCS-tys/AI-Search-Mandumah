@@ -71,6 +71,9 @@ export interface EvidenceStatistic {
   chunk_refs?: number[];
 }
 
+/** Document stance toward the query premise (Consensus-style meter input). */
+export type EvidenceStance = "support" | "contrast" | "mixed" | "neutral";
+
 /** Structured evidence extracted from one source document (advanced mode). */
 export interface EvidenceDoc {
   doc_index: number;
@@ -84,5 +87,6 @@ export interface EvidenceDoc {
   limitations?: string[];
   implications?: string[];
   evidence_quality?: string;
+  stance?: EvidenceStance;
   notes?: string;
 }

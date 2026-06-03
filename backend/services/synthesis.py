@@ -87,6 +87,7 @@ _ADVANCED_EVIDENCE_SYSTEM_PROMPT = """\
   "limitations": ["قيد أو محدد"],
   "implications": ["دلالة أو توصية"],
   "evidence_quality": "high",
+  "stance": "support",
   "notes": "أي ملاحظة منهجية مهمة"
 }}
 
@@ -96,6 +97,8 @@ _ADVANCED_EVIDENCE_SYSTEM_PROMPT = """\
 - إذا لم يرد شيء بوضوح فاجعل قيمته "غير مذكور".
 - اجعل evidence اقتباساً حرفياً قصيراً من النص.
 - chunk_refs يجب أن تشير إلى أرقام المقاطع داخل هذا المستند فقط.
+- "stance" هو موقف هذا المستند من فرضية السؤال: "support" إذا دعمت نتائجه الفرضية، "contrast" إذا عارضتها أو وجد نتائج مغايرة، "mixed" إذا كانت النتائج متباينة، "neutral" إذا كان وصفياً أو غير حاسم تجاه السؤال.
+- "evidence_quality" واحدة من: "high" أو "medium" أو "low".
 - اكتب كل النص بالعربية.
 
 المقاطع:
@@ -515,6 +518,9 @@ def _extract_document_evidence(
     data.setdefault("limitations", [])
     data.setdefault("implications", [])
     data.setdefault("evidence_quality", "medium")
+    data.setdefault("stance", "neutral")
+    if data.get("stance") not in {"support", "contrast", "mixed", "neutral"}:
+        data["stance"] = "neutral"
     data.setdefault("notes", "")
     return data
 
