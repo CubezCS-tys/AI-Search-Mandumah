@@ -851,13 +851,13 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
   const btnBase =
     "px-2 py-1 rounded text-xs border cursor-pointer transition-colors";
   const btnNormal =
-    `${btnBase} bg-white text-text-secondary border-border-subtle hover:bg-gray-50`;
+    `${btnBase} bg-bg-elevated text-text-secondary border-border-subtle hover:bg-bg-secondary`;
 
   return (
     <div className="flex flex-col" style={{ minHeight: "100vh" }}>
       {/* Toolbar — sticks below the Header (h-13 = 3.25rem) */}
       <div
-        className="sticky top-13 z-50 border-b border-border/50 bg-white/95 backdrop-blur-sm"
+        className="sticky top-13 z-50 border-b border-border/50 bg-bg-elevated/95 backdrop-blur-sm"
       >
         <div className="mx-auto flex h-10 max-w-5xl items-center gap-4 px-5">
           {/* Back button */}
@@ -937,7 +937,7 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
 
         {/* Find bar */}
         {findOpen && (
-          <div className="border-t border-border/50 bg-white/95">
+          <div className="border-t border-border/50 bg-bg-elevated/95">
             <div className="mx-auto flex h-10 max-w-5xl items-center gap-2 px-5">
               <Search size={14} className="text-text-muted shrink-0" />
               <input
@@ -1094,19 +1094,19 @@ export default function DocumentViewer({ docId, query = "", chatOpen = false, ci
       >
         <button
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          className="flex items-center justify-center w-10 h-10 rounded-full bg-white border border-gray-300 shadow-lg cursor-pointer hover:bg-gray-100 hover:scale-110 active:scale-95 transition-all duration-150"
+          className="flex items-center justify-center w-10 h-10 rounded-full bg-bg-elevated border border-border shadow-lg cursor-pointer hover:bg-bg-secondary hover:scale-110 active:scale-95 transition-all duration-150"
           title="الأعلى"
           aria-label="التمرير إلى الأعلى"
         >
-          <ChevronsUp size={20} className="text-gray-700" />
+          <ChevronsUp size={20} className="text-text-secondary" />
         </button>
         <button
           onClick={() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" })}
-          className="flex items-center justify-center w-10 h-10 rounded-full bg-white border border-gray-300 shadow-lg cursor-pointer hover:bg-gray-100 hover:scale-110 active:scale-95 transition-all duration-150"
+          className="flex items-center justify-center w-10 h-10 rounded-full bg-bg-elevated border border-border shadow-lg cursor-pointer hover:bg-bg-secondary hover:scale-110 active:scale-95 transition-all duration-150"
           title="الأسفل"
           aria-label="التمرير إلى الأسفل"
         >
-          <ChevronsDown size={20} className="text-gray-700" />
+          <ChevronsDown size={20} className="text-text-secondary" />
         </button>
       </div>
     </div>

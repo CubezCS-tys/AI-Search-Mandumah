@@ -56,3 +56,37 @@ export interface HealthResponse {
 }
 
 export type SearchMode = "hybrid" | "dense" | "sparse";
+
+/** A single extracted finding/claim with its supporting evidence. */
+export interface EvidenceFinding {
+  claim: string;
+  evidence?: string;
+  chunk_refs?: number[];
+}
+
+/** A single extracted statistic with its surrounding context. */
+export interface EvidenceStatistic {
+  value: string;
+  context?: string;
+  chunk_refs?: number[];
+}
+
+/** Document stance toward the query premise (Consensus-style meter input). */
+export type EvidenceStance = "support" | "contrast" | "mixed" | "neutral";
+
+/** Structured evidence extracted from one source document (advanced mode). */
+export interface EvidenceDoc {
+  doc_index: number;
+  doc_id: string;
+  title?: string;
+  research_focus?: string;
+  methodology?: string;
+  sample?: string;
+  key_findings?: EvidenceFinding[];
+  statistics?: EvidenceStatistic[];
+  limitations?: string[];
+  implications?: string[];
+  evidence_quality?: string;
+  stance?: EvidenceStance;
+  notes?: string;
+}

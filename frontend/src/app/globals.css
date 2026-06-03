@@ -1,57 +1,64 @@
 @import "tailwindcss";
 
-/* ── Design tokens ──────────────────────────────────────────── */
+/* ── Design tokens — Editorial theme ─────────────────────────────
+   Warm paper neutrals + Amiri serif headings + restrained burgundy.
+   A prestigious-academic-press aesthetic: premium feel comes from warm
+   tones, generous whitespace, hairline borders, and color used sparingly
+   as punctuation. ─────────────────────────────────────────────────── */
 
 :root {
-  --bg-primary: #fafafa;
-  --bg-secondary: #ffffff;
-  --bg-elevated: #ffffff;
-  --text-primary: #1a1a2e;
-  --text-secondary: #4a4a68;
-  --text-muted: #8889a0;
-  --border: #e5e5ea;
-  --border-subtle: #f0f0f3;
+  /* Warm paper palette (cream/ivory + warm greys) */
+  --bg-primary: #fbfaf7;
+  --bg-secondary: #f8f6f3;
+  --bg-elevated: #fffcf9;
+  --text-primary: #23201c;
+  --text-secondary: #6b6660;
+  --text-muted: #9a938b;
+  --border: #ddd6c8;
+  --border-subtle: #ece7dc;
   --accent: #9B1B30;
   --accent-hover: #7A1526;
-  --accent-subtle: #fdf2f4;
-  --highlight: #fce4ec;
+  --accent-subtle: #fdf5f2;
+  --highlight: #fcf4ed;
   --highlight-text: #7A1526;
-  --surface-glass: rgba(255, 255, 255, 0.80);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.03);
-  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.07), 0 2px 8px rgba(0, 0, 0, 0.04);
-  --radius: 12px;
-  --radius-sm: 8px;
-  --radius-lg: 20px;
+  --surface-glass: rgba(255, 252, 249, 0.82);
+  /* Softer, flatter shadows — editorial relies on borders + whitespace */
+  --shadow-sm: 0 1px 2px rgba(35, 32, 28, 0.04);
+  --shadow-md: 0 4px 12px rgba(35, 32, 28, 0.06), 0 1px 3px rgba(35, 32, 28, 0.04);
+  --shadow-lg: 0 10px 34px rgba(35, 32, 28, 0.08), 0 2px 8px rgba(35, 32, 28, 0.05);
+  /* Crisp printed-feel radii */
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-lg: 14px;
   /* RGB triplet used by the homepage vignette/animation overlays so they can
      fade to the page background in either theme. */
-  --bg-primary-rgb: 250, 250, 250;
-  --bg-elevated-rgb: 255, 255, 255;
+  --bg-primary-rgb: 251, 250, 247;
+  --bg-elevated-rgb: 255, 252, 249;
 }
 
-/* Dark theme — toggled by adding `.dark` on <html>. Overrides the same tokens
-   so every token-based component adapts automatically. The burgundy accent is
-   lightened slightly to keep adequate contrast on dark surfaces. */
+/* Dark theme — toggled by adding `.dark` on <html>. Warm charcoal-brown
+   (not cool blue-black) keeps the editorial warmth at night. The burgundy
+   accent is lightened to keep adequate contrast on dark surfaces. */
 .dark {
-  --bg-primary: #14141b;
-  --bg-secondary: #1c1c26;
-  --bg-elevated: #22222e;
-  --text-primary: #ececf1;
-  --text-secondary: #b8b9c6;
-  --text-muted: #8a8b9c;
-  --border: #34343f;
-  --border-subtle: #2a2a34;
+  --bg-primary: #1a1715;
+  --bg-secondary: #201b18;
+  --bg-elevated: #23201d;
+  --text-primary: #eae8e5;
+  --text-secondary: #b8b5ad;
+  --text-muted: #8a8783;
+  --border: #3a3531;
+  --border-subtle: #2f2b27;
   --accent: #d6536a;
   --accent-hover: #e06b80;
-  --accent-subtle: #2a1a20;
-  --highlight: #3a2129;
+  --accent-subtle: #2a1e1f;
+  --highlight: #3a2d25;
   --highlight-text: #f0c3cc;
-  --surface-glass: rgba(20, 20, 27, 0.80);
+  --surface-glass: rgba(26, 23, 21, 0.82);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.40), 0 1px 3px rgba(0, 0, 0, 0.30);
-  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
-  --bg-primary-rgb: 20, 20, 27;
-  --bg-elevated-rgb: 34, 34, 46;
+  --shadow-lg: 0 10px 34px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --bg-primary-rgb: 26, 23, 21;
+  --bg-elevated-rgb: 35, 32, 29;
 }
 
 @theme inline {
@@ -70,9 +77,14 @@
   --color-highlight-text: var(--highlight-text);
   --font-sans: var(--font-inter);
   --font-arabic: var(--font-tajawal);
+  --font-heading: var(--font-amiri);
 }
 
-/* ── Base ────────────────────────────────────────────────────── */
+/* Headings use the Amiri Naskh serif for an editorial, journal-like voice. */
+:where(h1, h2, h3, .heading-display) {
+  font-family: var(--font-amiri), var(--font-tajawal), system-ui, serif;
+  letter-spacing: 0.005em;
+}
 
 * {
   border-color: var(--border);
@@ -86,10 +98,16 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Arabic text gets generous line spacing */
+/* Arabic text gets generous line spacing for readability */
 [lang="ar"], .font-arabic {
   line-height: 1.9;
   font-family: var(--font-tajawal), var(--font-inter), system-ui, sans-serif;
+}
+
+/* Warm, refined text selection */
+::selection {
+  background: var(--accent-subtle);
+  color: var(--highlight-text);
 }
 
 /* ── Utilities ───────────────────────────────────────────────── */
@@ -131,7 +149,7 @@ body {
   animation: shimmer 1.8s ease-in-out infinite;
 }
 
-/* Scrollbar */
+/* Scrollbar — warm, editorial */
 ::-webkit-scrollbar {
   width: 8px;
 }
@@ -139,17 +157,17 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #b0b0b0;
+  background: var(--border);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #888;
+  background: var(--text-muted);
 }
 .dark ::-webkit-scrollbar-thumb {
-  background: #3f3f4b;
+  background: #4a443d;
 }
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: #55556a;
+  background: #635c52;
 }
 
 /* ── Document viewer ─────────────────────────────────────────── */

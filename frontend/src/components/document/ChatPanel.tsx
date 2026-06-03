@@ -292,7 +292,7 @@ function AnalyzingHero() {
             >
               <div
                 className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors duration-500 ${
-                  active ? "bg-accent/15" : "bg-gray-100"
+                  active ? "bg-accent/15" : "bg-bg-secondary"
                 }`}
               >
                 {active ? (
@@ -300,7 +300,7 @@ function AnalyzingHero() {
                 ) : visible ? (
                   <svg className="text-accent" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                 ) : (
-                  <Icon size={13} className="text-gray-400" />
+                  <Icon size={13} className="text-text-muted" />
                 )}
               </div>
               <span
@@ -663,12 +663,12 @@ export default function ChatPanel({
       const isBlock = className?.includes("language-");
       if (isBlock) {
         return (
-          <pre className="bg-gray-100 rounded-lg p-2.5 my-2 overflow-x-auto text-xs" dir="ltr">
+          <pre className="bg-bg-secondary rounded-lg p-2.5 my-2 overflow-x-auto text-xs" dir="ltr">
             <code>{children}</code>
           </pre>
         );
       }
-      return <code className="bg-gray-100 rounded px-1 py-0.5 text-xs" dir="ltr">{children}</code>;
+      return <code className="bg-bg-secondary rounded px-1 py-0.5 text-xs" dir="ltr">{children}</code>;
     },
     a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
       <a href={href} className="text-accent underline">{children}</a>
@@ -678,7 +678,7 @@ export default function ChatPanel({
         <table className="min-w-full text-xs border-collapse border border-border/40">{children}</table>
       </div>
     ),
-    th: ({ children }: { children?: React.ReactNode }) => <th className="border border-border/40 bg-gray-50 px-2 py-1 text-right font-semibold">{children}</th>,
+    th: ({ children }: { children?: React.ReactNode }) => <th className="border border-border/40 bg-bg-secondary px-2 py-1 text-right font-semibold">{children}</th>,
     td: ({ children }: { children?: React.ReactNode }) => <td className="border border-border/40 px-2 py-1">{children}</td>,
     blockquote: ({ children }: { children?: React.ReactNode }) => (
       <blockquote className="border-r-2 border-accent/40 pr-3 my-2 text-text-secondary italic">{children}</blockquote>
@@ -782,8 +782,8 @@ export default function ChatPanel({
     <div
       className={
         embedded
-          ? "flex h-full flex-col bg-white font-arabic overscroll-contain"
-          : "fixed bottom-0 right-0 top-0 z-50 flex w-[380px] flex-col border-l border-border bg-white shadow-xl font-arabic overscroll-contain"
+          ? "flex h-full flex-col bg-bg-elevated font-arabic overscroll-contain"
+          : "fixed bottom-0 right-0 top-0 z-50 flex w-[380px] flex-col border-l border-border bg-bg-elevated shadow-xl font-arabic overscroll-contain"
       }
       style={{ overscrollBehavior: "contain" }}
     >
@@ -807,14 +807,14 @@ export default function ChatPanel({
             <>
               <button
                 onClick={exportChat}
-                className="rounded-md p-1.5 text-text-muted hover:bg-gray-100 hover:text-accent transition-colors"
+                className="rounded-md p-1.5 text-text-muted hover:bg-bg-secondary hover:text-accent transition-colors"
                 title="تصدير المحادثة"
               >
                 <Download size={14} />
               </button>
               <button
                 onClick={clearChat}
-                className="rounded-md p-1.5 text-text-muted hover:bg-gray-100 hover:text-red-500 transition-colors"
+                className="rounded-md p-1.5 text-text-muted hover:bg-bg-secondary hover:text-red-500 transition-colors"
                 title="مسح المحادثة"
               >
                 <Trash2 size={14} />
@@ -826,7 +826,7 @@ export default function ChatPanel({
             className={`rounded-md p-1.5 transition-colors ${
               showCompare || compareDocIds.length > 0
                 ? "text-blue-600 bg-blue-50 hover:bg-blue-100"
-                : "text-text-muted hover:bg-gray-100"
+                : "text-text-muted hover:bg-bg-secondary"
             }`}
             title="مقارنة مع مستندات أخرى"
           >
@@ -835,7 +835,7 @@ export default function ChatPanel({
           {onClose && (
             <button
               onClick={onClose}
-              className="rounded-md p-1.5 text-text-muted hover:bg-gray-100 transition-colors"
+              className="rounded-md p-1.5 text-text-muted hover:bg-bg-secondary transition-colors"
               title="إغلاق"
             >
               <X size={16} />
@@ -853,7 +853,7 @@ export default function ChatPanel({
               onChange={(e) => setCompareInput(e.target.value)}
               placeholder="أدخل معرف المستند (مثل: 0013-034-001-001)"
               dir="ltr"
-              className="flex-1 rounded-md border border-border bg-white px-2 py-1 text-xs focus:border-accent/50 focus:outline-none"
+              className="flex-1 rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs focus:border-accent/50 focus:outline-none"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && compareInput.trim()) {
                   const id = compareInput.trim();
@@ -1096,7 +1096,7 @@ export default function ChatPanel({
                 <div className="flex gap-0.5 mt-1 mr-10 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-200">
                   <button
                     onClick={() => copyMessage(msg.content, i)}
-                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-text-muted hover:bg-gray-100 hover:text-text-primary transition-colors"
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-text-muted hover:bg-bg-secondary hover:text-text-primary transition-colors"
                     title="نسخ"
                   >
                     {copiedIdx === i ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
@@ -1104,7 +1104,7 @@ export default function ChatPanel({
                   {isLast && (
                     <button
                       onClick={regenerateLastResponse}
-                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-text-muted hover:bg-gray-100 hover:text-text-primary transition-colors"
+                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-text-muted hover:bg-bg-secondary hover:text-text-primary transition-colors"
                       title="إعادة التوليد"
                     >
                       <RefreshCw size={13} />
@@ -1120,7 +1120,7 @@ export default function ChatPanel({
 
       {/* Input composer */}
       <div className="shrink-0 px-3 pb-3 pt-2">
-        <div className="relative flex items-end rounded-2xl border border-border/60 bg-white shadow-sm focus-within:border-accent/40 focus-within:shadow-md transition-all">
+        <div className="relative flex items-end rounded-2xl border border-border/60 bg-bg-elevated shadow-sm focus-within:border-accent/40 focus-within:shadow-md transition-all">
           <textarea
             ref={inputRef}
             value={input}

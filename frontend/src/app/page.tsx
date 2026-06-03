@@ -111,7 +111,7 @@ export default function Home() {
       <NetworkBackground ref={networkRef} />
 
       {/* Theme toggle — floating top corner (no header on the landing page) */}
-      <div className="fixed top-4 left-4 z-30">
+      <div className="fixed top-5 start-5 z-30">
         <ThemeToggle />
       </div>
 
@@ -182,9 +182,10 @@ export default function Home() {
               className="mb-3 drop-shadow-sm"
               priority
             />
-            <p className="mb-10 font-arabic text-base text-text-muted">
+            <p className="mb-2 font-arabic text-[17px] leading-relaxed text-text-secondary">
               محرك بحث أكاديمي ذكي للمقالات العربية
             </p>
+            <div className="mb-9 h-px w-16 bg-gradient-to-l from-transparent via-accent/40 to-transparent" />
 
             <SearchBar variant="hero" onSearch={handleSearch} />
 
