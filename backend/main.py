@@ -785,6 +785,9 @@ class CorpusChatRequest(BaseModel):
     regenerate: bool = False
     # "More sources": retrieve more chunks for a broader answer.
     retrieve_top_k: int | None = Field(default=None, ge=1, le=40)
+    # "Deep": decompose the question into sub-queries and retrieve for each
+    # (agentic multi-step retrieval) for broader coverage on complex questions.
+    deep: bool = False
 
 
 @app.post("/api/chat/corpus")
@@ -810,11 +813,13 @@ async def chat_corpus(req: CorpusChatRequest):
         history: list[dict[str, str]] = []
     else:
         conversation_id = conv["id"]
+        # Pass the full thread; corpus_chat windows recent turns verbatim and
+        # summarises older ones internally for long-conversation memory.
         history = [
             {"role": m["role"], "content": m["content"]}
             for m in conv["messages"]
             if m["role"] in ("user", "assistant")
-        ][-_CORPUS_HISTORY_LIMIT:]
+        ]
 
     if req.regenerate and conv is not None:
         # Re-answer the existing last user turn: drop the stale assistant reply
@@ -836,12 +841,15 @@ async def chat_corpus(req: CorpusChatRequest):
 
         answer_parts: list[str] = []
         captured_sources: list[dict] | None = None
+        captured_meta: dict | None = None
+        captured_followups: list[str] | None = None
 
         top_k = req.retrieve_top_k or _CORPUS_RETRIEVE_TOP_K
         async for line in stream_corpus_chat(
-            message, history, searcher, retrieve_top_k=top_k
+            message, history, searcher, retrieve_top_k=top_k, deep=req.deep
         ):
-            # Inspect the JSON payload to accumulate tokens + sources for persistence.
+            # Inspect the JSON payload to accumulate tokens + sources + extras
+            # for persistence.
             payload = line[len("data: "):].strip() if line.startswith("data: ") else ""
             if payload and payload != "[DONE]":
                 try:
@@ -853,10 +861,17 @@ async def chat_corpus(req: CorpusChatRequest):
                         answer_parts.append(obj["token"])
                     elif "sources" in obj:
                         captured_sources = obj["sources"]
+                    elif "meta" in obj:
+                        captured_meta = obj["meta"]
+                    elif "followups" in obj:
+                        captured_followups = obj["followups"]
             yield line
 
         assistant_text = "".join(answer_parts)
         if assistant_text:
+            meta_payload: dict = dict(captured_meta) if captured_meta else {}
+            if captured_followups:
+                meta_payload["followups"] = captured_followups
             try:
                 await asyncio.to_thread(
                     store.add_message,
@@ -864,6 +879,7 @@ async def chat_corpus(req: CorpusChatRequest):
                     "assistant",
                     assistant_text,
                     captured_sources,
+                    meta_payload or None,
                 )
             except Exception:
                 logger.exception("Failed to persist assistant message")

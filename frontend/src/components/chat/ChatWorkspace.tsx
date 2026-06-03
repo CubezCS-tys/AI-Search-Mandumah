@@ -75,6 +75,7 @@ export default function ChatWorkspace({
   const [isRetrieving, setIsRetrieving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [deep, setDeep] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -187,6 +188,7 @@ export default function ChatWorkspace({
       message: string;
       regenerate?: boolean;
       retrieve_top_k?: number;
+      deep?: boolean;
     }) => {
       const controller = new AbortController();
       abortRef.current = controller;
@@ -215,6 +217,12 @@ export default function ChatWorkspace({
           },
           onSources: (sources: Source[]) => {
             updateAssistant((m) => ({ ...m, sources }));
+          },
+          onMeta: (meta) => {
+            updateAssistant((m) => ({ ...m, meta }));
+          },
+          onFollowups: (followups) => {
+            updateAssistant((m) => ({ ...m, followups }));
           },
           onDone: () => {
             setStreaming(false);
@@ -263,9 +271,9 @@ export default function ChatWorkspace({
       setStreaming(true);
       setIsRetrieving(true);
 
-      streamInto({ conversation_id: activeId ?? undefined, message });
+      streamInto({ conversation_id: activeId ?? undefined, message, deep });
     },
-    [input, streaming, activeId, streamInto],
+    [input, streaming, activeId, streamInto, deep],
   );
 
   /* ── Regenerate the last answer (optionally with more sources) ─ */
@@ -296,9 +304,10 @@ export default function ChatWorkspace({
         message: lastUser.content,
         regenerate: true,
         retrieve_top_k: retrieveTopK,
+        deep,
       });
     },
-    [streaming, activeId, messages, streamInto],
+    [streaming, activeId, messages, streamInto, deep],
   );
 
   const handleStop = useCallback(() => {
@@ -446,6 +455,7 @@ export default function ChatWorkspace({
                   rootQuery={rootQuery}
                   onRegenerate={handleRegenerate}
                   canRegenerate={!streaming && activeId !== null}
+                  onFollowup={(q) => handleSend(q)}
                 />
               )}
               <div ref={endRef} className="h-1" />
@@ -471,6 +481,8 @@ export default function ChatWorkspace({
           onSend={() => handleSend()}
           onStop={handleStop}
           streaming={streaming}
+          deep={deep}
+          onToggleDeep={() => setDeep((d) => !d)}
         />
       </main>
     </div>

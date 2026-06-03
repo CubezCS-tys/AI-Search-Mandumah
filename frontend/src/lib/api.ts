@@ -10,6 +10,7 @@ import type {
   ConversationSummary,
   CorpusChatHandlers,
   CorpusChatRequest,
+  RetrievalMeta,
   Source,
 } from "@/types/chat";
 
@@ -124,7 +125,7 @@ export async function streamCorpusChat(
   handlers: CorpusChatHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const { onConversationId, onToken, onSources, onDone, onError } = handlers;
+  const { onConversationId, onToken, onSources, onMeta, onFollowups, onDone, onError } = handlers;
 
   let res: Response;
   try {
@@ -166,11 +167,15 @@ export async function streamCorpusChat(
         conversation_id?: string;
         token?: string;
         sources?: Source[];
+        meta?: RetrievalMeta;
+        followups?: string[];
         error?: string;
       };
       if (parsed.conversation_id) onConversationId(parsed.conversation_id);
       else if (parsed.token) onToken(parsed.token);
       else if (parsed.sources) onSources(parsed.sources);
+      else if (parsed.meta) onMeta(parsed.meta);
+      else if (parsed.followups) onFollowups(parsed.followups);
       else if (parsed.error) {
         completed = true;
         onError(parsed.error);

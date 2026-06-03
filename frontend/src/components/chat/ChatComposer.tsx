@@ -6,7 +6,7 @@ import {
   forwardRef,
   type KeyboardEvent,
 } from "react";
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, Square, Telescope } from "lucide-react";
 
 interface ChatComposerProps {
   value: string;
@@ -15,11 +15,15 @@ interface ChatComposerProps {
   onStop: () => void;
   streaming: boolean;
   disabled?: boolean;
+  /** Whether deep (multi-step) retrieval is enabled. */
+  deep?: boolean;
+  /** Toggle deep retrieval. */
+  onToggleDeep?: () => void;
 }
 
 const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
   function ChatComposer(
-    { value, onChange, onSend, onStop, streaming, disabled },
+    { value, onChange, onSend, onStop, streaming, disabled, deep, onToggleDeep },
     ref,
   ) {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -51,6 +55,22 @@ const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
     return (
       <div className="mx-auto w-full max-w-3xl px-4 pb-4">
         <div className="flex items-end gap-2 rounded-3xl border border-border bg-bg-elevated p-2 shadow-md focus-within:border-accent/50 focus-within:shadow-lg transition-all">
+          {onToggleDeep && (
+            <button
+              type="button"
+              onClick={onToggleDeep}
+              aria-pressed={deep}
+              title={deep ? "البحث المعمّق مُفعّل" : "تفعيل البحث المعمّق"}
+              className={`flex h-9 shrink-0 items-center gap-1 rounded-full px-2.5 font-arabic text-[12px] font-medium transition ${
+                deep
+                  ? "bg-accent/[0.1] text-accent"
+                  : "text-text-muted hover:bg-bg-secondary"
+              }`}
+            >
+              <Telescope size={15} />
+              <span className="hidden sm:inline">معمّق</span>
+            </button>
+          )}
           <textarea
             ref={setRefs}
             value={value}
@@ -81,7 +101,9 @@ const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
           )}
         </div>
         <p className="mt-1.5 text-center text-[10.5px] text-text-muted font-arabic">
-          اضغط Enter للإرسال · Shift+Enter لسطر جديد · Ctrl+Shift+O محادثة جديدة
+          {deep
+            ? "البحث المعمّق: يُجزّئ السؤال ويبحث في عدة محاور · قد يستغرق وقتًا أطول"
+            : "اضغط Enter للإرسال · Shift+Enter لسطر جديد · Ctrl+Shift+O محادثة جديدة"}
         </p>
       </div>
     );

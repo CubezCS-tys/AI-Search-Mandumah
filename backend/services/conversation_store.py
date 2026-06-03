@@ -95,6 +95,15 @@ def _get_conn() -> sqlite3.Connection:
                     "CREATE INDEX IF NOT EXISTS idx_messages_conversation "
                     "ON messages(conversation_id, created_at)"
                 )
+                # ── Lightweight migration ─────────────────────────────────
+                # ``meta_json`` holds per-message extras (retrieval transparency
+                # + follow-up suggestions) added after the original schema.
+                cols = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+                }
+                if "meta_json" not in cols:
+                    conn.execute("ALTER TABLE messages ADD COLUMN meta_json TEXT")
                 conn.commit()
                 _conn = conn
                 logger.info("Conversation store initialised at %s", path)
@@ -124,21 +133,24 @@ def add_message(
     role: str,
     content: str,
     sources: list[dict[str, Any]] | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> str:
     """Append a message to a conversation and bump ``updated_at``.
 
-    Returns the new message id.
+    ``meta`` carries per-message extras (e.g. retrieval transparency and
+    follow-up suggestions for assistant turns). Returns the new message id.
     """
     msg_id = _new_id()
     now = _now_iso()
     sources_json = json.dumps(sources, ensure_ascii=False) if sources else None
+    meta_json = json.dumps(meta, ensure_ascii=False) if meta else None
     conn = _get_conn()
     with _lock:
         conn.execute(
             "INSERT INTO messages "
-            "(id, conversation_id, role, content, sources_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (msg_id, conversation_id, role, content, sources_json, now),
+            "(id, conversation_id, role, content, sources_json, meta_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (msg_id, conversation_id, role, content, sources_json, meta_json, now),
         )
         conn.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -159,7 +171,7 @@ def get_conversation(conversation_id: str) -> dict[str, Any] | None:
         if conv_row is None:
             return None
         msg_rows = conn.execute(
-            "SELECT id, role, content, sources_json, created_at "
+            "SELECT id, role, content, sources_json, meta_json, created_at "
             "FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
             (conversation_id,),
         ).fetchall()
@@ -167,12 +179,14 @@ def get_conversation(conversation_id: str) -> dict[str, Any] | None:
     messages: list[dict[str, Any]] = []
     for row in msg_rows:
         sources = json.loads(row["sources_json"]) if row["sources_json"] else None
+        meta = json.loads(row["meta_json"]) if row["meta_json"] else None
         messages.append(
             {
                 "id": row["id"],
                 "role": row["role"],
                 "content": row["content"],
                 "sources": sources,
+                "meta": meta,
                 "created_at": row["created_at"],
             }
         )

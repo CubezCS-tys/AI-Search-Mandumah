@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Sparkles, User, Copy, Check, Search, RefreshCw, Layers } from "lucide-react";
-import type { ChatMessage, Source } from "@/types/chat";
+import { Sparkles, User, Copy, Check, Search, RefreshCw, Layers, ChevronDown, Plus, Telescope } from "lucide-react";
+import type { ChatMessage, Source, RetrievalMeta } from "@/types/chat";
 import SourcesList from "./SourcesList";
 
 const MARKDOWN_CLASSES =
@@ -23,6 +23,10 @@ const MARKDOWN_CLASSES =
 interface AssistantMessageProps {
   content: string;
   sources?: ChatMessage["sources"];
+  /** Retrieval transparency (reformulated query, sub-queries, counts). */
+  meta?: RetrievalMeta | null;
+  /** Proactive follow-up question suggestions. */
+  followups?: string[];
   streaming?: boolean;
   retrieving?: boolean;
   query?: string;
@@ -32,6 +36,8 @@ interface AssistantMessageProps {
   onRegenerate?: (retrieveTopK?: number) => void;
   /** Whether regenerate controls should be active. */
   canRegenerate?: boolean;
+  /** Send a follow-up question as the next turn. */
+  onFollowup?: (question: string) => void;
 }
 
 /** Subtle "searching the corpus" status row shown before the first token. */
@@ -44,6 +50,99 @@ function RetrievalStatus() {
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
       </span>
       <span>يبحث في المصادر…</span>
+    </div>
+  );
+}
+
+/** Collapsible retrieval-transparency bar: shows the reformulated query, any
+ * deep-mode sub-queries, and how many passages were retrieved. */
+function RetrievalMetaBar({ meta }: { meta: RetrievalMeta }) {
+  const rewrite = meta.rewritten_query?.trim();
+  const subs = (meta.sub_queries ?? []).filter((s) => s.trim());
+  if (!rewrite && subs.length === 0 && !meta.deep) return null;
+
+  return (
+    <details className="group mb-2.5 rounded-lg border border-border/70 bg-bg-secondary/40 text-[12px]">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-1.5 font-arabic text-text-muted">
+        {meta.deep ? (
+          <Telescope size={13} className="text-accent" />
+        ) : (
+          <Search size={13} />
+        )}
+        <span className="font-medium">
+          {meta.deep ? "بحث معمّق" : "تفاصيل البحث"}
+        </span>
+        {typeof meta.source_count === "number" && meta.source_count > 0 && (
+          <span className="text-text-muted">
+            · {meta.source_count} <span className="font-arabic">مقطع</span>
+          </span>
+        )}
+        <ChevronDown
+          size={13}
+          className="ms-auto transition group-open:rotate-180"
+        />
+      </summary>
+      <div className="space-y-1.5 px-2.5 pb-2 pt-0.5">
+        {rewrite && (
+          <div className="flex flex-wrap items-center gap-1.5 font-arabic text-text-secondary">
+            <span className="text-text-muted">صياغة البحث:</span>
+            <span className="rounded bg-bg-elevated px-1.5 py-0.5">{rewrite}</span>
+          </div>
+        )}
+        {subs.length > 0 && (
+          <div className="font-arabic text-text-secondary">
+            <span className="text-text-muted">محاور البحث:</span>
+            <ul className="mt-1 space-y-1">
+              {subs.map((s, i) => (
+                <li key={i} className="flex items-start gap-1.5">
+                  <span
+                    className="mt-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded bg-accent/10 px-1 text-[10px] font-bold text-accent"
+                    dir="ltr"
+                  >
+                    {i + 1}
+                  </span>
+                  <span>{s}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+/** Perplexity-style follow-up question chips shown beneath a finished answer. */
+function FollowupChips({
+  items,
+  onPick,
+}: {
+  items: string[];
+  onPick: (q: string) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <div className="mt-4 border-t border-border/60 pt-3">
+      <div className="mb-2 flex items-center gap-1.5 font-arabic text-[12px] font-semibold text-text-muted">
+        <Sparkles size={13} className="text-accent" />
+        <span>أسئلة للمتابعة</span>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {items.map((q, i) => (
+          <button
+            key={i}
+            onClick={() => onPick(q)}
+            dir="rtl"
+            className="group flex items-center justify-between gap-2 rounded-xl border border-border bg-bg-elevated px-3 py-2 text-right font-arabic text-[13px] text-text-primary transition hover:border-accent/40 hover:bg-accent/[0.04]"
+          >
+            <span>{q}</span>
+            <Plus
+              size={14}
+              className="shrink-0 text-text-muted transition group-hover:text-accent"
+            />
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -268,7 +367,7 @@ function SearchButton({ query }: { query: string }) {
   );
 }
 
-function AssistantMessage({ content, sources, streaming, retrieving, query, userQuery, onRegenerate, canRegenerate }: AssistantMessageProps) {
+function AssistantMessage({ content, sources, meta, followups, streaming, retrieving, query, userQuery, onRegenerate, canRegenerate, onFollowup }: AssistantMessageProps) {
   const body = useMemo(
     () => <CitedAnswer content={content} sources={sources ?? []} />,
     [content, sources],
@@ -285,12 +384,15 @@ function AssistantMessage({ content, sources, streaming, retrieving, query, user
         {showRetrieval ? (
           <RetrievalStatus />
         ) : (
-          <div className={MARKDOWN_CLASSES}>
-            {body}
-            {streaming && (
-              <span className="ms-0.5 inline-block h-4 w-0.5 animate-pulse bg-accent align-middle" />
-            )}
-          </div>
+          <>
+            {meta && <RetrievalMetaBar meta={meta} />}
+            <div className={MARKDOWN_CLASSES}>
+              {body}
+              {streaming && (
+                <span className="ms-0.5 inline-block h-4 w-0.5 animate-pulse bg-accent align-middle" />
+              )}
+            </div>
+          </>
         )}
         {sources && sources.length > 0 && (
           <SourcesList
@@ -329,6 +431,9 @@ function AssistantMessage({ content, sources, streaming, retrieving, query, user
             )}
           </div>
         )}
+        {!streaming && followups && followups.length > 0 && onFollowup && (
+          <FollowupChips items={followups} onPick={onFollowup} />
+        )}
       </div>
     </div>
   );
@@ -361,6 +466,8 @@ interface ChatMessagesProps {
   onRegenerate?: (retrieveTopK?: number) => void;
   /** Whether regenerate controls should be active. */
   canRegenerate?: boolean;
+  /** Send a follow-up suggestion as the next turn. */
+  onFollowup?: (question: string) => void;
 }
 
 export default function ChatMessages({
@@ -370,6 +477,7 @@ export default function ChatMessages({
   rootQuery,
   onRegenerate,
   canRegenerate,
+  onFollowup,
 }: ChatMessagesProps) {
   const lastAssistantIndex = (() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -388,6 +496,8 @@ export default function ChatMessages({
             key={i}
             content={m.content}
             sources={m.sources}
+            meta={m.meta}
+            followups={m.followups}
             streaming={streamingIndex === i}
             retrieving={streamingIndex === i && isRetrieving}
             query={rootQuery}
@@ -398,6 +508,7 @@ export default function ChatMessages({
             }
             onRegenerate={i === lastAssistantIndex ? onRegenerate : undefined}
             canRegenerate={canRegenerate}
+            onFollowup={onFollowup}
           />
         ),
       )}
