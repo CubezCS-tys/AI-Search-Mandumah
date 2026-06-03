@@ -7,9 +7,10 @@ import remarkGfm from "remark-gfm";
 import {
   Sparkles, X, RefreshCw, Loader2, AlertCircle, Zap, FlaskConical,
   Copy, Check, Download, ListTree, ExternalLink, BookOpen, Quote, Clock, ChevronDown,
+  Microscope, TrendingUp, Target, FlaskRound, Users, ShieldAlert,
 } from "lucide-react";
 import { streamSynthesis } from "@/lib/api";
-import type { SearchMode, SearchResultItem, SynthesisMode } from "@/types/search";
+import type { SearchMode, SearchResultItem, SynthesisMode, EvidenceDoc } from "@/types/search";
 
 interface SynthesisPanelProps {
   query: string;
@@ -65,6 +66,150 @@ function citedNumbers(text: string): Set<number> {
   return set;
 }
 
+const QUALITY_STYLE: Record<string, string> = {
+  high: "bg-emerald-100 text-emerald-700",
+  عالية: "bg-emerald-100 text-emerald-700",
+  medium: "bg-amber-100 text-amber-700",
+  متوسطة: "bg-amber-100 text-amber-700",
+  low: "bg-rose-100 text-rose-700",
+  منخفضة: "bg-rose-100 text-rose-700",
+};
+
+function qualityLabel(q?: string): string {
+  if (!q) return "";
+  const map: Record<string, string> = { high: "أدلة عالية", medium: "أدلة متوسطة", low: "أدلة محدودة" };
+  return map[q.toLowerCase()] ?? q;
+}
+
+/** Structured evidence cards extracted per document in advanced mode. */
+function EvidenceCards({
+  evidence,
+  query,
+  onCitationClick,
+}: {
+  evidence: EvidenceDoc[];
+  query: string;
+  onCitationClick?: (zeroBasedIndex: number) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  if (evidence.length === 0) return null;
+
+  const totalFindings = evidence.reduce((n, d) => n + (d.key_findings?.length ?? 0), 0);
+  const totalStats = evidence.reduce((n, d) => n + (d.statistics?.length ?? 0), 0);
+
+  return (
+    <div className="rounded-xl border border-border-subtle bg-bg-elevated">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between px-3.5 py-2.5">
+        <span className="flex items-center gap-2 font-arabic text-[13px] font-semibold text-text-primary">
+          <Microscope size={14} className="text-accent" /> الأدلة المنظمة
+          <span className="flex items-center gap-1 rounded-full bg-bg-secondary px-1.5 py-0.5 text-[10px] text-text-muted" dir="ltr">
+            {evidence.length}د · {totalFindings}ن · {totalStats}إ
+          </span>
+        </span>
+        <ChevronDown size={15} className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="flex flex-col gap-3 px-2.5 pb-3 pt-1">
+          {evidence.map((d) => (
+            <div key={`${d.doc_index}-${d.doc_id}`} className="rounded-lg border border-border-subtle bg-bg-secondary/40 p-3">
+              {/* Card header */}
+              <div className="flex items-start gap-2">
+                <span className="mt-0.5 inline-flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded bg-accent px-1 text-[11px] font-bold text-white" dir="ltr">
+                  {d.doc_index}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <button
+                    onClick={() => onCitationClick?.(d.doc_index - 1)}
+                    className="block w-full text-right font-arabic text-[12.5px] font-semibold leading-snug text-text-primary line-clamp-2 hover:text-accent"
+                  >
+                    {d.title || d.doc_id}
+                  </button>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-text-muted">
+                    <span dir="ltr" className="font-mono">{d.doc_id}</span>
+                    {d.evidence_quality && (
+                      <span className={`rounded px-1.5 py-0.5 font-medium ${QUALITY_STYLE[d.evidence_quality.toLowerCase()] ?? "bg-bg-secondary text-text-secondary"}`}>
+                        {qualityLabel(d.evidence_quality)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <Link
+                  href={`/document/${d.doc_id}?q=${encodeURIComponent(query)}`}
+                  title="فتح المستند"
+                  className="rounded-md p-1 text-text-muted transition hover:bg-bg-secondary hover:text-accent"
+                >
+                  <ExternalLink size={13} />
+                </Link>
+              </div>
+
+              {/* Focus / methodology / sample meta */}
+              {(d.research_focus || d.methodology || d.sample) && (
+                <div className="mt-2.5 flex flex-col gap-1.5 font-arabic text-[11.5px] leading-relaxed text-text-secondary">
+                  {d.research_focus && (
+                    <p className="flex gap-1.5"><Target size={13} className="mt-0.5 flex-shrink-0 text-accent/70" /><span>{d.research_focus}</span></p>
+                  )}
+                  {d.methodology && (
+                    <p className="flex gap-1.5"><FlaskRound size={13} className="mt-0.5 flex-shrink-0 text-accent/70" /><span>{d.methodology}</span></p>
+                  )}
+                  {d.sample && (
+                    <p className="flex gap-1.5"><Users size={13} className="mt-0.5 flex-shrink-0 text-accent/70" /><span>{d.sample}</span></p>
+                  )}
+                </div>
+              )}
+
+              {/* Key findings */}
+              {d.key_findings && d.key_findings.length > 0 && (
+                <div className="mt-3">
+                  <p className="mb-1.5 flex items-center gap-1.5 font-arabic text-[11px] font-bold text-text-primary">
+                    <Sparkles size={12} className="text-accent" /> النتائج الرئيسية
+                  </p>
+                  <ul className="flex flex-col gap-1.5">
+                    {d.key_findings.map((f, i) => (
+                      <li key={i} className="rounded-md border-r-2 border-accent/30 bg-bg-elevated/60 py-1 pe-2 ps-2.5 font-arabic text-[12px] leading-relaxed text-text-primary">
+                        {f.claim}
+                        {f.evidence && <span className="mt-0.5 block text-[11px] text-text-muted">{f.evidence}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Statistics */}
+              {d.statistics && d.statistics.length > 0 && (
+                <div className="mt-3">
+                  <p className="mb-1.5 flex items-center gap-1.5 font-arabic text-[11px] font-bold text-text-primary">
+                    <TrendingUp size={12} className="text-accent" /> الإحصاءات
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {d.statistics.map((s, i) => (
+                      <span key={i} title={s.context} className="inline-flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-elevated px-2 py-1 font-arabic text-[11.5px] text-text-primary">
+                        <span className="font-bold text-accent" dir="ltr">{s.value}</span>
+                        {s.context && <span className="text-text-muted line-clamp-1 max-w-[180px]">{s.context}</span>}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Limitations */}
+              {d.limitations && d.limitations.length > 0 && (
+                <div className="mt-3">
+                  <p className="mb-1 flex items-center gap-1.5 font-arabic text-[11px] font-bold text-text-secondary">
+                    <ShieldAlert size={12} className="text-amber-500" /> حدود الدراسة
+                  </p>
+                  <ul className="list-inside list-disc font-arabic text-[11.5px] leading-relaxed text-text-muted">
+                    {d.limitations.map((l, i) => <li key={i}>{l}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SynthesisPanel({
   query,
   results,
@@ -83,6 +228,7 @@ export default function SynthesisPanel({
   const [copied, setCopied] = useState(false);
   const [showRefs, setShowRefs] = useState(true);
   const [activeId, setActiveId] = useState("");
+  const [evidence, setEvidence] = useState<EvidenceDoc[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isAdvanced = synthesisMode === "advanced";
@@ -102,6 +248,7 @@ export default function SynthesisPanel({
   const startSynthesis = useCallback(async () => {
     setText("");
     setError("");
+    setEvidence([]);
     setState("streaming");
     abortRef.current = new AbortController();
     try {
@@ -125,6 +272,7 @@ export default function SynthesisPanel({
           setState("error");
         },
         abortRef.current.signal,
+        (ev) => setEvidence(ev),
       );
     } catch (e: unknown) {
       if (e instanceof Error && e.name === "AbortError") return;
@@ -143,6 +291,7 @@ export default function SynthesisPanel({
     setState("idle");
     setText("");
     setError("");
+    setEvidence([]);
   }, []);
 
   // Use refs so the custom renderer component identities stay stable across
@@ -492,6 +641,11 @@ export default function SynthesisPanel({
             <span className="inline-block h-4 w-0.5 animate-pulse bg-accent align-middle" />
           )}
         </div>
+      )}
+
+      {/* Structured evidence cards (advanced mode) */}
+      {state !== "error" && evidence.length > 0 && (
+        <EvidenceCards evidence={evidence} query={query} onCitationClick={onCitationClick} />
       )}
 
       {/* References / generated bibliography */}

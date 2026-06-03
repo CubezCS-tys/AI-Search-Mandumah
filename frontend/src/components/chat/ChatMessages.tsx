@@ -201,20 +201,43 @@ function CitedAnswer({ content, sources }: CitedAnswerProps) {
         }
         if (href?.startsWith("#s-")) {
           const n = parseInt(href.slice(3), 10);
+          const src = sourcesRef.current[n - 1];
           return (
-            <button
-              type="button"
-              title="افتح المستند"
-              onClick={(e) => {
-                e.preventDefault();
-                const src = sourcesRef.current[n - 1];
-                if (!src) return;
-                routerRef.current.push(`/document/${encodeURIComponent(src.doc_id)}`);
-              }}
-              className="mx-0.5 inline-flex cursor-pointer items-center rounded bg-accent/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-accent no-underline transition-colors hover:bg-accent hover:text-white"
-            >
-              {children}
-            </button>
+            <span className="group/cite relative inline-block align-baseline">
+              <button
+                type="button"
+                title="افتح المستند"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (!src) return;
+                  routerRef.current.push(`/document/${encodeURIComponent(src.doc_id)}`);
+                }}
+                className="mx-0.5 inline-flex cursor-pointer items-center rounded bg-accent/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-accent no-underline transition-colors hover:bg-accent hover:text-white"
+              >
+                {children}
+              </button>
+              {src && (
+                <span
+                  dir="rtl"
+                  className="pointer-events-none invisible absolute bottom-full right-0 z-50 mb-1.5 flex w-64 flex-col gap-1 rounded-xl border border-border bg-bg-elevated p-3 text-right opacity-0 shadow-lg transition-opacity duration-150 group-hover/cite:visible group-hover/cite:opacity-100"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded bg-accent px-1 text-[10px] font-bold text-white" dir="ltr">{n}</span>
+                    {src.section && (
+                      <span className="rounded bg-bg-secondary px-1.5 py-0.5 text-[10px] text-text-muted">{src.section}</span>
+                    )}
+                    {typeof src.score === "number" && (
+                      <span className="ms-auto text-[10px] tabular-nums text-text-muted" dir="ltr">{src.score.toFixed(3)}</span>
+                    )}
+                  </span>
+                  <span className="line-clamp-2 font-arabic text-[12px] font-semibold leading-snug text-text-primary">{src.title || src.doc_id}</span>
+                  {(src.snippet || src.text) && (
+                    <span className="line-clamp-3 font-arabic text-[11px] leading-relaxed text-text-muted">{src.snippet || src.text}</span>
+                  )}
+                  <span className="mt-0.5 text-[10px] text-accent">انقر لفتح المستند</span>
+                </span>
+              )}
+            </span>
           );
         }
         return (

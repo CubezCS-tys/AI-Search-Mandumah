@@ -583,6 +583,10 @@ def _stream_advanced(
             chunks = _rehydrate_seed_chunks(searcher, [seed_doc])
         evidence_docs.append(_extract_document_evidence(client, query, seed_doc, chunks, doc_index))
 
+    # Surface the structured evidence to the client so the UI can render
+    # key-findings / statistics cards alongside the prose synthesis.
+    yield f"data: {json.dumps({'evidence': evidence_docs}, ensure_ascii=False)}\n\n"
+
     final_prompt = _build_advanced_final_prompt(query, evidence_docs)
     messages = [
         {"role": "system", "content": final_prompt},

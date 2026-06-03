@@ -3,6 +3,7 @@ import type {
   SearchRequest,
   SearchResponse,
   SynthesisRequest,
+  EvidenceDoc,
 } from "@/types/search";
 import type {
   Conversation,
@@ -40,6 +41,7 @@ export async function streamSynthesis(
   onDone: () => void,
   onError: (msg: string) => void,
   signal?: AbortSignal,
+  onEvidence?: (evidence: EvidenceDoc[]) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/search/synthesize`, {
     method: "POST",
@@ -72,6 +74,7 @@ export async function streamSynthesis(
     try {
       const parsed = JSON.parse(payload);
       if (parsed.token) onToken(parsed.token);
+      else if (parsed.evidence) onEvidence?.(parsed.evidence as EvidenceDoc[]);
       else if (parsed.error) {
         completed = true;
         onError(parsed.error);
