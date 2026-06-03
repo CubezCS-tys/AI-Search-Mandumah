@@ -157,7 +157,7 @@ function ComparisonMatrix({
   evidence: EvidenceDoc[];
   onCitationClick?: (zeroBasedIndex: number) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   if (evidence.length < 2) return null;
 
   return (
