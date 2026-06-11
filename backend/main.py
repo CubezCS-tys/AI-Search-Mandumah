@@ -19,6 +19,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -43,7 +44,35 @@ from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Al-Manthooma Search API", version="0.1.0")
+# ── Shared runtime helpers (avoid circular import with mcp_server) ────────
+from backend.services.runtime import (
+    _DOC_ID_RE,
+    doc_dir as _doc_dir,
+    load_doc_content_cached as _load_doc_content_cached,
+    get_searcher,
+    dedup_results,
+    compute_low_confidence,
+    get_corpus_stats,
+)
+
+# ── MCP kill switch ───────────────────────────────────────────────────────
+_MCP_ENABLED = os.getenv("MCP_ENABLED", "true").lower() not in ("false", "0", "no")
+
+if _MCP_ENABLED:
+    from backend.mcp_server import mcp as _mcp_server_instance, mcp_app as _mcp_asgi_app
+
+
+@contextlib.asynccontextmanager
+async def _app_lifespan(app):
+    """Wire the MCP session-manager lifespan into the FastAPI app."""
+    if _MCP_ENABLED:
+        async with _mcp_server_instance.session_manager.run():
+            yield
+    else:
+        yield
+
+
+app = FastAPI(title="Al-Manthooma Search API", version="0.1.0", lifespan=_app_lifespan)
 
 # CORS — allow configurable origins, default to wildcard for dev
 _CORS_ORIGINS = [
@@ -100,6 +129,7 @@ _RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 _RATE_LIMITED_PREFIXES = (
     "/api/search",
     "/api/chat",
+    "/mcp",
 )
 _rate_window_seconds = 60.0
 _rate_hits: dict[str, list[float]] = {}
@@ -172,26 +202,6 @@ async def _abuse_guard(request: Request, call_next):
     return await call_next(request)
 
 
-# ── Lazy-loaded searcher (avoid loading BGE-M3 at import time) ────────────
-
-_searcher = None
-_searcher_lock = threading.Lock()
-
-
-def get_searcher():
-    global _searcher
-    if _searcher is None:
-        with _searcher_lock:
-            if _searcher is None:
-                from backend.services.search import Searcher
-
-                _searcher = Searcher(
-                    qdrant_url=os.getenv("QDRANT_URL", "http://localhost:6333"),
-                    collection_name=os.getenv("COLLECTION_NAME", "academic_articles"),
-                )
-    return _searcher
-
-
 # ── Models ────────────────────────────────────────────────────────────────
 
 
@@ -250,27 +260,7 @@ async def health():
 @app.get("/api/stats")
 async def stats():
     """Return live collection stats: chunk count + unique doc count."""
-    try:
-        searcher = get_searcher()
-        info = searcher.client.get_collection(searcher.collection_name)
-        chunks = info.points_count or 0
-
-        # Use facet counting on the indexed doc_id field (O(1) vs O(N) scroll)
-        try:
-            from qdrant_client import models
-            facet_response = searcher.client.facet(
-                collection_name=searcher.collection_name,
-                key="doc_id",
-                limit=100000,  # high limit to count all unique doc_ids
-            )
-            documents = len(facet_response.hits)
-        except Exception:
-            # Fallback: estimate from collection info if facet unavailable
-            documents = 0
-
-        return {"chunks": chunks, "documents": documents}
-    except Exception as e:
-        return {"chunks": 0, "documents": 0, "error": str(e)}
+    return await asyncio.to_thread(get_corpus_stats)
 
 
 @app.post("/api/search", response_model=SearchResponse)
@@ -313,19 +303,9 @@ async def search(req: SearchRequest):
     search_ms = round((time.time() - t0) * 1000, 1)
 
     if req.deduplicate:
-        seen: dict[str, object] = {}
-        for r in results:
-            if r.doc_id not in seen:
-                seen[r.doc_id] = r
-        results = list(seen.values())[:req.top_k]
+        results = dedup_results(results, req.top_k)
 
-    if results:
-        top_score = results[0].score
-        top_window = results[: min(3, len(results))]
-        avg_lexical = sum(getattr(r, "lexical_score", 0.0) for r in top_window) / len(top_window)
-        low_confidence = top_score < 0.34 or avg_lexical < 0.14
-    else:
-        low_confidence = True
+    low_confidence = compute_low_confidence(results)
 
     warning = None
     if low_confidence:
@@ -436,14 +416,7 @@ async def synthesize(req: SynthesisRequest):
 
 # ── PDF serving ───────────────────────────────────────────────────────────
 
-_DOC_ID_RE = re.compile(r"^\d{4}-\d{3}-\d{3}-\d{3}$")
-_OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", str(Path(__file__).parent.parent / "output")))
-_EXTRA_DOC_DIRS = [
-    Path(d.strip())
-    for d in os.getenv("EXTRA_DOC_DIRS", str(Path(__file__).parent.parent / "output_batch05")).split(",")
-    if d.strip()
-]
-
+# _DOC_ID_RE, _doc_dir, load_doc_content_cached imported from backend.services.runtime
 
 @app.get("/api/pdf/{doc_id}")
 async def get_pdf(doc_id: str):
@@ -460,25 +433,6 @@ async def get_pdf(doc_id: str):
 
 
 # ── Document OCR data ─────────────────────────────────────────────────────
-
-def _doc_dir(doc_id: str) -> Path:
-    """Locate a document directory, checking the nested output/ layout first,
-    then any flat extra directories (e.g. output_batch05/)."""
-    # Nested layout: output/output_XXXX/doc_id/
-    journal_id = doc_id[:4]
-    nested = _OUTPUT_DIR / f"output_{journal_id}" / doc_id
-    if nested.is_dir():
-        return nested
-
-    # Flat layout: extra_dir/doc_id/
-    for extra in _EXTRA_DOC_DIRS:
-        flat = extra / doc_id
-        if flat.is_dir():
-            return flat
-
-    # Fallback to the original nested path (will 404 naturally)
-    return nested
-
 
 # LRU cache for raster dimensions (avoids re-opening the PDF for every OCR request)
 _RASTER_DIMS_CACHE_MAX = 100
@@ -635,28 +589,7 @@ class ChatRequest(BaseModel):
     compare_doc_ids: list[str] = Field(default=[], max_length=3)
 
 
-def _load_doc_content(json_path: Path) -> str:
-    """Synchronous: read and return the content field from a document JSON."""
-    with open(json_path, encoding="utf-8") as f:
-        return json.load(f).get("content", "")
-
-
-# LRU cache for document content (avoids re-reading JSON on every chat message)
-_DOC_CONTENT_CACHE_MAX = 50
-_doc_content_cache: OrderedDict[str, str] = OrderedDict()
-
-
-def _load_doc_content_cached(json_path: Path) -> str:
-    """Cached wrapper around _load_doc_content."""
-    key = str(json_path)
-    if key in _doc_content_cache:
-        _doc_content_cache.move_to_end(key)
-        return _doc_content_cache[key]
-    content = _load_doc_content(json_path)
-    _doc_content_cache[key] = content
-    if len(_doc_content_cache) > _DOC_CONTENT_CACHE_MAX:
-        _doc_content_cache.popitem(last=False)
-    return content
+# _load_doc_content_cached is imported from backend.services.runtime
 
 
 @app.post("/api/chat")
@@ -943,3 +876,34 @@ async def delete_conversation_route(conversation_id: str):
     if not deleted:
         raise HTTPException(404, "Conversation not found")
     return JSONResponse(content={"ok": True})
+
+
+# ── MCP server mount ──────────────────────────────────────────────────────
+#
+# Mounted last so all existing routes take precedence.
+# The lifespan (defined near the top) wires the session-manager lifecycle.
+#
+# phase 2: OAuth — replace X-API-Key with OAuth 2.1/Entra ID when targeting
+#           the Microsoft gallery submission.
+
+if _MCP_ENABLED:
+    from starlette.types import ASGIApp, Receive, Scope, Send
+
+    class _MCPPathNormalizer:
+        """Rewrite empty path to '/' before passing to the MCP sub-app.
+
+        When FastAPI mounts the MCP sub-app at '/mcp' and a client sends
+        POST /mcp (no trailing slash), Starlette strips the prefix and
+        passes path='' to the sub-app.  This wrapper ensures that the
+        canonical POST /mcp/ endpoint also handles the bare /mcp form
+        inside the sub-app routing layer.
+        """
+        def __init__(self, app: ASGIApp) -> None:
+            self._app = app
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope.get("type") == "http" and not scope.get("path"):
+                scope = {**scope, "path": "/", "raw_path": b"/"}
+            await self._app(scope, receive, send)
+
+    app.mount("/mcp", _MCPPathNormalizer(_mcp_asgi_app))
