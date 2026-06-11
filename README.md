@@ -137,3 +137,72 @@ Query → OpenAI encode → Qdrant hybrid search (RRF) → Results
 doc_id → PDF / OCR JSON / page images → viewer
 doc_id + message → full document text → GPT-4o-mini stream → SSE
 ```
+
+---
+
+## MCP server (Streamable HTTP)
+
+The same FastAPI process exposes a [Model Context Protocol](https://modelcontextprotocol.io/)
+server at `POST /mcp`, letting any MCP-capable client (Claude, Copilot Studio, MCP Inspector)
+query the Mandumah corpus through 4 retrieval-only tools:
+
+| Tool | Description |
+|---|---|
+| `search_articles` | Hybrid search; returns ranked passages with metadata |
+| `get_article` | Full text of a specific article (pageable) |
+| `get_article_passages` | Passage-level search within one article |
+| `get_corpus_overview` | Collection stats (document + chunk counts) |
+
+### How to use
+
+The MCP server is enabled by default. Set `MCP_ENABLED=false` to disable it entirely.
+
+```bash
+# Canonical MCP endpoint (note trailing slash)
+POST /mcp/
+
+# Or: POST /mcp → 307 redirect → /mcp/ (clients that follow redirects work fine)
+```
+
+**Required env vars** (same as the main API):
+```env
+OPENAI_API_KEY=sk-...
+QDRANT_URL=http://localhost:6333
+PUBLIC_BASE_URL=https://your-public-host   # used in pdf_url links
+```
+
+**Optional:**
+```env
+API_KEY=...          # when set, require X-API-Key header on all routes including /mcp
+MCP_ENABLED=false    # disables /mcp entirely (no import, no route)
+```
+
+### Quick smoke test (MCP Inspector)
+
+With the server running and Qdrant up:
+```bash
+npx @modelcontextprotocol/inspector
+# Transport: Streamable HTTP
+# URL: http://localhost:8000/mcp
+# Header: X-API-Key: <key>   (if API_KEY is set)
+```
+
+### Running the test suite
+
+```bash
+# Unit + protocol tests (no Qdrant needed)
+source .venv/bin/activate
+pytest backend/tests/ -m unit -v
+
+# Integration tests (requires live Qdrant + OPENAI_API_KEY)
+pytest backend/tests/ -m integration -v
+
+# Performance benchmark (manual, prints latency table)
+python backend/tests/perf_mcp.py
+```
+
+### Copilot Studio setup
+
+See [docs/MCP_COPILOT_STUDIO_SETUP.md](docs/MCP_COPILOT_STUDIO_SETUP.md) for
+click-by-click instructions to attach the server to a Copilot Studio agent.
+
