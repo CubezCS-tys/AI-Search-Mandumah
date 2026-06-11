@@ -181,10 +181,10 @@ The implementing agent fills this in; the reviewer verifies.
 |---|---|---|---|
 | Unit tests (`pytest -m unit`) | ✅ PASSED | 2026-06-11 | 39/39 passed. All `search_articles`, `get_article`, `get_article_passages`, `get_corpus_overview` tool tests including full doc_id traversal matrix and shared-code identity check. |
 | Protocol tests | ✅ PASSED | 2026-06-11 | 13/13 passed. initialize, tools/list (4 tools), tool call, isError, kill switch (MCP_ENABLED=false), auth matrix, rate limit 4th→429, body size guard, regression (health/search/stats). |
-| Integration tests (live Qdrant) | ⏭ SKIPPED | 2026-06-11 | QDRANT_URL and OPENAI_API_KEY not available in this sandbox environment. All 8 integration tests are correctly skipped via `pytest.mark.skipif`. To be run by reviewer against live infrastructure. |
-| Performance numbers | ⏭ NOT RUN | 2026-06-11 | perf_mcp.py requires live Qdrant + OPENAI_API_KEY. p50= N/A p95= N/A concurrent= N/A. To be run by reviewer. |
+| Integration tests (live Qdrant) | ✅ PASSED (reviewer) | 2026-06-11 | All 8 integration tests run by reviewer against live Qdrant + OpenAI: 8/8 passed (full suite 60/60). Includes /api/search parity, journal filter, get_article round-trip, low-confidence on garbage query. |
+| Performance numbers | ✅ RUN (reviewer) | 2026-06-11 | p50=980ms, p95=10010ms (p95 dominated by single cold-start first call ~10s; warm calls 700–1250ms). Concurrent: 10 calls OK, /api/health mid-burst 16ms (no event-loop starvation). get_article 40k chars: 500ms. Reviewer fixed an off-by-one sys.path bug in perf_mcp.py (parents[3]→parents[2]) so it runs as documented. |
 | Security manual checks | ⚠ PARTIAL | 2026-06-11 | Automated: doc_id traversal matrix (all 8 bad IDs rejected — tested in unit suite), auth matrix (401/200 — tested in protocol suite), body size guard (413 — tested in protocol suite). Manual checks (HTTPS exposure, API_KEY not committed, error messages generic, prompt injection audit) require live deployment — not yet done. |
-| MCP Inspector pass | ⏭ NOT RUN | 2026-06-11 | Requires live Qdrant + running server. No screenshot available. To be done by reviewer at review time. |
+| MCP Inspector pass | ✅ EQUIVALENT (reviewer) | 2026-06-11 | Reviewer ran a live HTTP smoke test in lieu of the Inspector UI (headless env): uvicorn on :8010, raw JSON-RPC initialize → tools/list (4 tools) → tools/call search_articles with Arabic query returned 3 results, top score 0.880, low_confidence=false, valid pdf_url links. Inspector UI pass + screenshot still recommended before demo day. |
 | Copilot Studio E2E | ⏭ BLOCKED | 2026-06-11 | Blocked: requires M365 tenant admin access and a deployed HTTPS URL. Guide written at docs/MCP_COPILOT_STUDIO_SETUP.md. |
 
 **Known deviations from spec:**
