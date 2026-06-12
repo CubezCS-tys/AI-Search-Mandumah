@@ -149,11 +149,27 @@ Created automatically on first run if the collection does not exist.
 
 **Point ID:** `md5(chunk_id)` as a hex string — deterministic and idempotent. Re-ingesting the same document overwrites existing points without creating duplicates.
 
+### Input modes
+
+Two mutually exclusive sources (exactly one required):
+
+- `--input-dir` — `output/`-style tree of per-article Azure DI JSON files
+  (flat or nested layout). File-level SHA1 skip applies.
+- `--input-jsonl` — directory of `*.jsonl` / `*.jsonl.gz` content shards
+  produced by `scripts/extract_content.py` (one
+  `{"doc_id", "batch", "content"}` object per line). Used for the 6 TB
+  corpus workflow (`docs/S3_INGESTION_PLAN.md`): shards are ~25 GB instead
+  of ~3.7 TB of raw JSON. Resume works per doc ID via the checkpoint; the
+  progress total is estimated from `extract_manifest.json` when present.
+
 ### CLI
 
 ```bash
 # Ingest all documents (resumes from checkpoint)
 python -m backend.pipeline.ingest --input-dir output/
+
+# Ingest from content shards
+python -m backend.pipeline.ingest --input-jsonl content_shards/ --collection academic_articles_v2
 
 # Full options
 python -m backend.pipeline.ingest \
@@ -167,7 +183,8 @@ python -m backend.pipeline.ingest \
 
 | Flag | Default | Description |
 |---|---|---|
-| `--input-dir` | required | Root of the `output/` directory |
+| `--input-dir` | one of the two | Root of the `output/` directory |
+| `--input-jsonl` | one of the two | Directory of content shards |
 | `--collection` | `academic_articles` | Qdrant collection name |
 | `--batch-size` | `32` | Embedding batch size |
 | `--no-resume` | off | Ignore checkpoint; reprocess everything |

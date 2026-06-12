@@ -1,12 +1,18 @@
 """
 Document ingestion pipeline with async OpenAI embeddings.
 
-Reads OCR JSON files -> chunks them -> embeds with OpenAI -> upserts to Qdrant.
+Reads OCR documents -> chunks them -> embeds with OpenAI -> upserts to Qdrant.
+
+Two input modes:
+    --input-dir    output/-style tree of per-article Azure DI JSON files
+    --input-jsonl  directory of *.jsonl(.gz) content shards produced by
+                   scripts/extract_content.py (one {"doc_id", "batch",
+                   "content"} object per line)
 
 Architecture:
     [Chunker Thread] --queue--> [Embedder Thread (async)] --queue--> [Upserter Thread]
 
-    Stage 1 (Chunker):  Reads JSON, chunks documents, batches them
+    Stage 1 (Chunker):  Reads documents, chunks them, batches them
     Stage 2 (Embedder): Encodes batches via async OpenAI API (concurrent requests)
     Stage 3 (Upserter): Upserts points to Qdrant, updates checkpoint
 
@@ -25,7 +31,8 @@ Features:
 
 Usage:
     python -m backend.pipeline.ingest --input-dir output/ --collection academic_articles_v2
-    python -m backend.pipeline.ingest --input-dir output/ --collection academic_articles_v2 --dry-run --limit 100
+    python -m backend.pipeline.ingest --input-jsonl content_shards/ --collection academic_articles_v2
+    python -m backend.pipeline.ingest --input-jsonl content_shards/ --dry-run --limit 100
     python -m backend.pipeline.ingest --input-dir output/ --collection academic_articles_v2 --max-concurrent 8
 """
 
@@ -33,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import gzip
 import hashlib
 import json
 import logging
@@ -43,6 +51,7 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
+from itertools import islice
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -146,6 +155,73 @@ def _find_json_files(input_dir: Path) -> list[Path]:
     return files
 
 
+def _find_shards(input_dir: Path) -> list[Path]:
+    """Find content shards (*.jsonl / *.jsonl.gz) produced by extract_content.py."""
+    return sorted(
+        p for p in input_dir.iterdir()
+        if p.is_file() and (p.name.endswith(".jsonl") or p.name.endswith(".jsonl.gz"))
+    )
+
+
+# ── Document record sources ──────────────────────────────────────────────
+#
+# Both generators yield (doc_id, content, doc_meta, fhash) records for the
+# chunk worker. content=None means "already known unchanged — checkpoint the
+# doc id without re-embedding". fhash is (key, sha1) to record in the
+# file-hash store after successful chunking, or None when not applicable.
+
+
+def _iter_dir_docs(remaining: list[Path], file_hashes: dict[str, str], progress: dict):
+    """Yield records from per-article Azure DI JSON files (--input-dir mode)."""
+    for json_path in remaining:
+        doc_id = json_path.stem
+        try:
+            current_fhash = _file_content_hash(json_path)
+            if current_fhash and file_hashes.get(json_path.name) == current_fhash:
+                yield doc_id, None, None, None
+                continue
+
+            with open(json_path) as f:
+                data = json.load(f)
+            content = data.get("content", "")
+            fhash = (json_path.name, current_fhash) if current_fhash else None
+            yield doc_id, content, _extract_metadata_from_path(json_path), fhash
+        except Exception as e:
+            logger.error("Reading failed for %s: %s", doc_id, e, exc_info=True)
+            progress["failed"].append(doc_id)
+
+
+def _iter_shard_docs(shards: list[Path], processed_ids: set[str], progress: dict):
+    """Yield records from JSONL content shards (--input-jsonl mode).
+
+    Resume filtering happens here (the shard is the unit of storage, not the
+    document, so the upfront path filtering used in dir mode does not apply).
+    """
+    for shard in shards:
+        opener = gzip.open if shard.name.endswith(".gz") else open
+        try:
+            with opener(shard, "rt", encoding="utf-8") as f:
+                for lineno, line in enumerate(f, 1):
+                    if not line.strip():
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        doc_id = rec["doc_id"]
+                    except Exception as e:
+                        logger.error("Bad record %s:%d: %s", shard.name, lineno, e)
+                        progress["failed"].append(f"{shard.name}:{lineno}")
+                        continue
+                    if doc_id in processed_ids:
+                        continue
+                    meta = _extract_metadata_from_id(doc_id)
+                    if rec.get("batch"):
+                        meta["batch"] = rec["batch"]
+                    yield doc_id, rec.get("content", ""), meta, None
+        except Exception as e:
+            logger.error("Failed to read shard %s: %s", shard, e, exc_info=True)
+            progress["failed"].append(shard.name)
+
+
 # ── Checkpoint & state ───────────────────────────────────────────────────
 
 
@@ -194,9 +270,8 @@ def _write_manifest(path: Path, data: dict):
 # ── Metadata extraction ─────────────────────────────────────────────────
 
 
-def _extract_metadata_from_path(json_path: Path) -> dict:
-    """Extract journal/volume/issue/article metadata from the file path and ID."""
-    doc_id = json_path.stem
+def _extract_metadata_from_id(doc_id: str) -> dict:
+    """Extract journal/volume/issue/article metadata from the document ID."""
     parts = doc_id.split("-")
     meta = {"doc_id": doc_id}
     if len(parts) == 4:
@@ -205,6 +280,11 @@ def _extract_metadata_from_path(json_path: Path) -> dict:
         meta["issue"] = parts[2]
         meta["article_num"] = parts[3]
     return meta
+
+
+def _extract_metadata_from_path(json_path: Path) -> dict:
+    """Extract journal/volume/issue/article metadata from the file path and ID."""
+    return _extract_metadata_from_id(json_path.stem)
 
 
 # ── Collection management ───────────────────────────────────────────────
@@ -324,7 +404,7 @@ def _check_memory():
 
 
 def _chunk_worker(
-    remaining: list[Path],
+    records,
     batch_size: int,
     embed_queue: queue.Queue,
     progress: dict,
@@ -333,43 +413,36 @@ def _chunk_worker(
     file_hashes: dict[str, str],
     para_hashes_lock: threading.Lock,
 ):
-    """Read JSON files, chunk documents, and produce batches for embedding.
+    """Chunk document records and produce batches for embedding.
 
-    Performs paragraph-level and file-level deduplication.
+    `records` is an iterator of (doc_id, content, doc_meta, fhash) from
+    _iter_dir_docs or _iter_shard_docs. Performs paragraph-level dedup;
+    file-level dedup arrives pre-computed as content=None records.
     """
     batch_chunks: list[Chunk] = []
     batch_payloads: list[dict] = []
     batch_doc_ids: list[str] = []
 
     try:
-        for json_path in remaining:
+        for doc_id, content, doc_meta, fhash in records:
             if cancel.is_set():
                 break
 
-            doc_id = json_path.stem
             progress["current_doc"] = doc_id
 
             try:
-                # File-level skip: if file content unchanged, skip entirely
-                current_fhash = _file_content_hash(json_path)
-                if current_fhash and json_path.name in file_hashes:
-                    if file_hashes[json_path.name] == current_fhash:
-                        progress["skipped_file_dup"] += 1
-                        # Still mark as processed for checkpoint
-                        batch_doc_ids.append(doc_id)
-                        continue
+                if content is None:
+                    # File-level skip: unchanged — checkpoint without re-embedding
+                    progress["skipped_file_dup"] += 1
+                    batch_doc_ids.append(doc_id)
+                    continue
 
-                with open(json_path) as f:
-                    data = json.load(f)
-
-                content = data.get("content", "")
                 if not content or len(content.strip()) < 100:
                     logger.warning("Skipping %s: content too short", doc_id)
                     progress["failed"].append(doc_id)
                     continue
 
                 result = chunk_document(content, doc_id)
-                doc_meta = _extract_metadata_from_path(json_path)
 
                 if not result.chunks:
                     logger.warning("Skipping %s: no chunks produced", doc_id)
@@ -392,8 +465,8 @@ def _chunk_worker(
                 batch_doc_ids.append(doc_id)
 
                 # Update file hash after successful chunking
-                if current_fhash:
-                    file_hashes[json_path.name] = current_fhash
+                if fhash:
+                    file_hashes[fhash[0]] = fhash[1]
 
                 # Send batch when full
                 if len(batch_chunks) >= batch_size:
@@ -556,60 +629,60 @@ def _upsert_worker(
 # ── Dry-run pre-scan ─────────────────────────────────────────────────────
 
 
-def _dry_run_scan(
-    remaining: list[Path],
-    para_hashes: set[str],
-    file_hashes: dict[str, str],
-):
-    """Pre-scan files to show dedup stats without calling the API."""
-    total_files = len(remaining)
+def _dry_run_scan(records, para_hashes: set[str]) -> dict:
+    """Pre-scan document records to show dedup stats without calling the API."""
+    total_docs = 0
     unchanged_files = 0
     new_files = 0
     total_paras = 0
     dup_paras = 0
     seen = set(para_hashes)
 
-    for fp in remaining:
-        fh = _file_content_hash(fp)
-        if fh and fp.name in file_hashes and file_hashes[fp.name] == fh:
+    for doc_id, content, _meta, _fhash in records:
+        total_docs += 1
+        if content is None:
             unchanged_files += 1
+            continue
+        if not content or len(content.strip()) < 100:
             continue
 
         try:
-            with open(fp) as f:
-                data = json.load(f)
-            content = data.get("content", "")
-            if not content or len(content.strip()) < 100:
-                continue
-
-            result = chunk_document(content, fp.stem)
-            new_files += 1
-            for chunk in result.chunks:
-                total_paras += 1
-                h = _paragraph_content_hash(chunk.text)
-                if h in seen:
-                    dup_paras += 1
-                else:
-                    seen.add(h)
+            result = chunk_document(content, doc_id)
         except Exception:
             continue
+        new_files += 1
+        for chunk in result.chunks:
+            total_paras += 1
+            h = _paragraph_content_hash(chunk.text)
+            if h in seen:
+                dup_paras += 1
+            else:
+                seen.add(h)
 
-    unique = total_paras - dup_paras
+    stats = {
+        "total_docs": total_docs,
+        "unchanged_files": unchanged_files,
+        "new_files": new_files,
+        "total_paras": total_paras,
+        "dup_paras": dup_paras,
+        "unique_paras": total_paras - dup_paras,
+    }
     logger.info("DRY RUN Pre-scan Results:")
-    logger.info("  Total files to scan:     %d", total_files)
-    logger.info("  Unchanged (file skip):   %d", unchanged_files)
-    logger.info("  New/changed files:       %d", new_files)
-    logger.info("  Total paragraphs (raw):  %d", total_paras)
-    logger.info("  Duplicate paragraphs:    %d", dup_paras)
-    logger.info("  Unique new paragraphs:   %d", unique)
+    logger.info("  Total docs scanned:      %d", stats["total_docs"])
+    logger.info("  Unchanged (file skip):   %d", stats["unchanged_files"])
+    logger.info("  New/changed docs:        %d", stats["new_files"])
+    logger.info("  Total paragraphs (raw):  %d", stats["total_paras"])
+    logger.info("  Duplicate paragraphs:    %d", stats["dup_paras"])
+    logger.info("  Unique new paragraphs:   %d", stats["unique_paras"])
     logger.info("(No embeddings generated in dry run.)")
+    return stats
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────
 
 
 def ingest_documents(
-    input_dir: str,
+    input_dir: str | None = None,
     collection_name: str = "academic_articles_v2",
     qdrant_url: str = "http://localhost:6333",
     batch_size: int = 100,
@@ -620,6 +693,7 @@ def ingest_documents(
     limit: int = 0,
     force_recreate: bool = False,
     normalize_arabic: bool = True,
+    input_jsonl: str | None = None,
 ):
     """
     Main ingestion pipeline with async OpenAI embeddings.
@@ -639,22 +713,20 @@ def ingest_documents(
         limit: Max number of documents to process (0 = all).
         force_recreate: If True, drop and recreate Qdrant collection.
         normalize_arabic: Whether to normalize Arabic text.
+        input_jsonl: Path to a directory of *.jsonl(.gz) content shards
+            (from scripts/extract_content.py). Exactly one of input_dir /
+            input_jsonl must be given.
     """
     from backend.pipeline.embedder import OpenAIEmbedder
 
-    input_path = Path(input_dir)
+    if bool(input_dir) == bool(input_jsonl):
+        raise ValueError("Provide exactly one of input_dir or input_jsonl")
+
+    input_path = Path(input_dir or input_jsonl)
     checkpoint_path = input_path / CHECKPOINT_FILE
     para_hash_path = input_path / PARA_HASH_FILE
     file_hash_path = input_path / FILE_HASH_FILE
     manifest_path = input_path / MANIFEST_FILE
-
-    # Find all JSON files
-    json_files = _find_json_files(input_path)
-    logger.info("Found %d JSON files in %s", len(json_files), input_dir)
-
-    if not json_files:
-        logger.warning("No JSON files found!")
-        return
 
     # Load checkpoint & dedup state
     checkpoint = (
@@ -664,23 +736,68 @@ def ingest_documents(
     )
     para_hashes = _load_para_hashes(para_hash_path) if resume else set()
     file_hashes = _load_file_hashes(file_hash_path) if resume else {}
-
     processed_ids = set(checkpoint["processed"])
-    remaining = [f for f in json_files if f.stem not in processed_ids]
-    if limit > 0:
-        remaining = remaining[:limit]
-    logger.info(
-        "Already processed: %d, Remaining: %d, Paragraph hashes: %d, File hashes: %d",
-        len(processed_ids), len(remaining), len(para_hashes), len(file_hashes),
-    )
 
-    if not remaining:
-        logger.info("All documents already processed!")
-        return
+    # Shared progress state (record iterators report read failures into it)
+    progress = {
+        "processed_docs": 0,
+        "total_chunks": 0,
+        "current_doc": "",
+        "failed": [],
+        "skipped_file_dup": 0,
+        "skipped_para_dup": 0,
+    }
+
+    # Build the document record source
+    total_docs: int | None = None
+    if input_jsonl:
+        shards = _find_shards(input_path)
+        logger.info("Found %d content shards in %s", len(shards), input_jsonl)
+        if not shards:
+            logger.warning("No content shards (*.jsonl / *.jsonl.gz) found!")
+            return
+
+        records = _iter_shard_docs(shards, processed_ids, progress)
+        if limit > 0:
+            records = islice(records, limit)
+            total_docs = limit
+        else:
+            # Best-effort total from the extraction manifest, if present
+            extract_manifest = input_path / "extract_manifest.json"
+            if extract_manifest.exists():
+                try:
+                    est = json.loads(extract_manifest.read_text())["total_docs"]
+                    total_docs = max(est - len(processed_ids), 0) or None
+                except Exception:
+                    pass
+        logger.info(
+            "Already processed: %d, Remaining: %s, Paragraph hashes: %d",
+            len(processed_ids), total_docs if total_docs is not None else "unknown",
+            len(para_hashes),
+        )
+    else:
+        json_files = _find_json_files(input_path)
+        logger.info("Found %d JSON files in %s", len(json_files), input_dir)
+        if not json_files:
+            logger.warning("No JSON files found!")
+            return
+
+        remaining = [f for f in json_files if f.stem not in processed_ids]
+        if limit > 0:
+            remaining = remaining[:limit]
+        logger.info(
+            "Already processed: %d, Remaining: %d, Paragraph hashes: %d, File hashes: %d",
+            len(processed_ids), len(remaining), len(para_hashes), len(file_hashes),
+        )
+        if not remaining:
+            logger.info("All documents already processed!")
+            return
+        total_docs = len(remaining)
+        records = _iter_dir_docs(remaining, file_hashes, progress)
 
     # Dry-run: pre-scan only
     if dry_run:
-        _dry_run_scan(remaining, para_hashes, file_hashes)
+        _dry_run_scan(records, para_hashes)
         return
 
     # Initialize embedder
@@ -694,15 +811,6 @@ def ingest_documents(
         client = QdrantClient(url=qdrant_url, timeout=120)
         create_collection(client, collection_name, force_recreate=force_recreate)
 
-    # Shared progress state
-    progress = {
-        "processed_docs": 0,
-        "total_chunks": 0,
-        "current_doc": "",
-        "failed": [],
-        "skipped_file_dup": 0,
-        "skipped_para_dup": 0,
-    }
     cancel = threading.Event()
     para_hashes_lock = threading.Lock()
     checkpoint_lock = threading.Lock()
@@ -733,7 +841,7 @@ def ingest_documents(
     # Launch pipeline stages
     t_chunk = threading.Thread(
         target=_chunk_worker,
-        args=(remaining, batch_size, embed_queue, progress, cancel,
+        args=(records, batch_size, embed_queue, progress, cancel,
               para_hashes, file_hashes, para_hashes_lock),
         name="chunker",
         daemon=True,
@@ -757,8 +865,8 @@ def ingest_documents(
     t_upsert.start()
 
     logger.info(
-        "Pipeline started: %d docs to process (chunker -> embedder[async x%d] -> upserter)",
-        len(remaining),
+        "Pipeline started: %s docs to process (chunker -> embedder[async x%d] -> upserter)",
+        total_docs if total_docs is not None else "?",
         max_concurrent,
     )
 
@@ -767,7 +875,7 @@ def ingest_documents(
         from tqdm import tqdm
 
         pbar = tqdm(
-            total=len(remaining),
+            total=total_docs,
             desc="Ingesting",
             unit="doc",
             ncols=120,
@@ -783,15 +891,15 @@ def ingest_documents(
             elapsed = time.time() - start_time
             rate = progress["total_chunks"] / elapsed if elapsed > 0 else 0
 
-            if pbar:
+            if pbar is not None:
                 delta = progress["processed_docs"] - last_doc_count
                 if delta > 0:
                     pbar.update(delta)
                     last_doc_count = progress["processed_docs"]
 
-                # ETA calculation
-                if progress["processed_docs"] > 0:
-                    eta_s = (len(remaining) - progress["processed_docs"]) / (
+                # ETA calculation (only when the total is known)
+                if total_docs is not None and progress["processed_docs"] > 0:
+                    eta_s = (total_docs - progress["processed_docs"]) / (
                         progress["processed_docs"] / elapsed
                     )
                     if eta_s < 60:
@@ -810,10 +918,10 @@ def ingest_documents(
                 )
             else:
                 logger.info(
-                    "Progress: %d/%d docs | %d chunks | %.1f chunks/sec | "
+                    "Progress: %d/%s docs | %d chunks | %.1f chunks/sec | "
                     "dedup: %dp/%df | current: %s",
                     progress["processed_docs"],
-                    len(remaining),
+                    total_docs if total_docs is not None else "?",
                     progress["total_chunks"],
                     rate,
                     progress["skipped_para_dup"],
@@ -824,7 +932,7 @@ def ingest_documents(
         logger.warning("Interrupted — signalling workers to stop...")
         cancel.set()
     finally:
-        if pbar:
+        if pbar is not None:
             pbar.close()
 
     # Wait for all threads to finish
@@ -887,7 +995,9 @@ def ingest_documents(
 
 def main():
     parser = argparse.ArgumentParser(description="Ingest OCR documents into Qdrant")
-    parser.add_argument("--input-dir", required=True, help="Path to output/ directory")
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--input-dir", help="Path to output/ directory of per-article JSON files")
+    src.add_argument("--input-jsonl", help="Path to directory of *.jsonl(.gz) content shards")
     parser.add_argument("--collection", default="academic_articles_v2", help="Qdrant collection name")
     parser.add_argument("--qdrant-url", default="http://localhost:6333", help="Qdrant server URL")
     parser.add_argument("--batch-size", type=int, default=100, help="Texts per OpenAI API call")
@@ -909,6 +1019,7 @@ def main():
 
     ingest_documents(
         input_dir=args.input_dir,
+        input_jsonl=args.input_jsonl,
         collection_name=args.collection,
         qdrant_url=args.qdrant_url,
         batch_size=args.batch_size,
