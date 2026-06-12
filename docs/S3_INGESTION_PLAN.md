@@ -89,21 +89,39 @@ Shard format (`content/<batch_dir>.jsonl.gz`), one line per document:
 
 ---
 
+## Drive reality (observed 2026-06-12)
+
+The external drive is attached to a **Windows** laptop (`My Passport (D:)`).
+Much of the corpus is stored as **zip archives** (`output_batchXX.zip`,
+~20–60 GB each, ~9.5 K docs per zip, internal layout
+`output_batchXX/<doc_id>/<doc_id>.{json,pdf,html}`), spread across more than
+one location (`D:\output\` holds zips; some `output_batchXX` folders also sit
+at the drive root). The extraction script reads zips in place — **do not
+extract them first.**
+
 ## Track A — content extraction & upload (laptop)
 
-1. Copy `scripts/extract_content.py` (in this repo, stdlib-only, cross-platform)
-   to the laptop and run it against the drive:
+1. Copy `scripts/extract_content.py` (in this repo, stdlib-only, Python 3.9+,
+   no pip installs) to the laptop and run it against each corpus location:
 
-   ```bash
-   python3 extract_content.py --input-root /mnt/external_drive --out-dir ~/content_shards --workers 8
+   ```powershell
+   py extract_content.py --input-root D:\output --out-dir D:\content_shards --workers 4
+   py extract_content.py --input-root D:\ --out-dir D:\content_shards --workers 4   # root-level batch folders
    ```
 
-   - One `*.jsonl.gz` shard per top-level batch directory, written atomically;
-     re-running skips completed shards (resume-safe).
-   - Handles both layouts (flat `batch/doc_id/doc_id.json` and nested
-     `batch/journal/doc_id/doc_id.json`).
-   - Expected output ~25 GB total; runtime is dominated by reading ~3.7 TB of
-     JSON off the external drive (≈ 8–14 h on a USB HDD — run overnight).
+   - A "batch" is a top-level directory **or** `.zip` archive; one
+     `*.jsonl.gz` shard per batch, written atomically; re-running (or running
+     multiple roots into one out-dir) skips shards that already exist, which
+     also deduplicates a batch present both as zip and extracted folder.
+   - Handles flat (`batch/doc_id/doc_id.json`), nested
+     (`batch/journal/doc_id/doc_id.json`), and zipped layouts.
+   - Hidden/system dirs (`System Volume Information`, `$RECYCLE.BIN`, …) and
+     the out-dir itself are skipped; a failing batch is logged to
+     `extract_errors.log`, never fatal.
+   - Writing the shards to the external drive itself is fine (~25 GB of
+     writes vs ~3.7 TB of reads); keep `--workers` at ~4 on a USB HDD.
+   - Expected output ~25 GB total; runtime is dominated by drive reads
+     (≈ 8–14 h — run overnight, re-run to resume after interruption).
 
 2. Upload the shards (fast — done in hours on any reasonable uplink):
 
@@ -113,17 +131,22 @@ Shard format (`content/<batch_dir>.jsonl.gz`), one line per document:
 
 ## Track B — full raw upload (laptop, background)
 
-rclone beats `aws s3 sync` for millions of small files. Run inside
-tmux/screen; it is fully resumable (`copy` skips already-transferred files):
+Since the corpus is already packed into ~80 large zips, upload those as-is —
+far faster and cheaper than millions of small objects (~80 PUT-multiparts
+instead of ~2.4 M PUTs). rclone is resumable (`copy` skips finished files):
 
-```bash
-rclone copy /mnt/external_drive s3:<bucket>/raw \
-  --transfers 24 --checkers 48 --fast-list \
-  --s3-storage-class STANDARD_IA \
-  --bwlimit "08:00,5M 23:00,off" \
-  --log-file rclone_raw.log --log-level INFO --stats 60s
+```powershell
+rclone copy D:\output s3:<bucket>/raw/zips --transfers 4 --s3-chunk-size 64M --s3-storage-class STANDARD_IA --bwlimit "08:00,5M 23:00,off" --log-file rclone_raw.log --log-level INFO --stats 60s
 ```
 
+(Repeat per corpus location on the drive; batches that exist only as loose
+folders upload with the same command pointed at that folder.)
+
+- Trade-off accepted here: zipped objects can't be fetched per-PDF directly.
+  Phase 4 (PDF serving) will either extract zips into
+  `raw/<batch>/<doc_id>/...` objects server-side (one-time, in AWS, no laptop
+  egress) or range-read zip members via their central directory. Decide then;
+  the upload format doesn't block embedding either way.
 - `--bwlimit` schedule keeps daytime internet usable; tune to taste.
 - Wall-clock for 6 TB: ~5.5 days at 100 Mbps up, ~11 days at 50 Mbps,
   ~28 days at 20 Mbps. If the uplink is below ~50 Mbps, consider an AWS
