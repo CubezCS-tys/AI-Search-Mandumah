@@ -184,6 +184,15 @@ def _split_sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def _normalize_keywords(keywords: list[str] | str | None) -> str:
+    """Flatten MARC keywords into a single comma-separated line for embedding."""
+    if not keywords:
+        return ""
+    if isinstance(keywords, str):
+        return keywords.strip()
+    return "، ".join(k.strip() for k in keywords if k and k.strip())
+
+
 def chunk_document(
     content: str,
     doc_id: str,
@@ -192,6 +201,9 @@ def chunk_document(
     min_chars: int = DEFAULT_MIN_CHARS,
     max_chars: int = DEFAULT_MAX_CHARS,
     overlap_chars: int = DEFAULT_OVERLAP_CHARS,
+    title: str | None = None,
+    keywords: list[str] | str | None = None,
+    abstract: str | None = None,
 ) -> ChunkingResult:
     """
     Chunk a document's content field into retrieval-optimized chunks.
@@ -203,12 +215,27 @@ def chunk_document(
         min_chars: Minimum chunk size - smaller chunks merge with previous.
         max_chars: Maximum chunk size - triggers a split.
         overlap_chars: Characters to overlap between consecutive chunks.
+        title: Authoritative title from MARC metadata. When given, it replaces
+            the heuristic title guessed from the OCR text and is prepended to
+            every chunk's embed_text.
+        keywords: MARC subject keywords (653$a). When given, they are folded
+            into every chunk's embed_text after the title to sharpen topical
+            retrieval. Accepts a list or a pre-joined string.
+        abstract: MARC abstract (520). When given, an extra "abstract chunk"
+            is emitted so the curated summary is retrievable in its own right.
 
     Returns:
         ChunkingResult with list of Chunk objects.
     """
     lines = content.split("\n")
-    title = _extract_title(lines)
+    # MARC title is authoritative; fall back to the OCR heuristic when absent.
+    title = (title or "").strip() or _extract_title(lines)
+    keyword_line = _normalize_keywords(keywords)
+
+    def _compose(section: str, body: str) -> str:
+        """Build the text fed to the embedder: title + keywords + section + body."""
+        parts = [p for p in (title, keyword_line, section, body) if p]
+        return "\n".join(parts).strip()
 
     # --- Phase 1: Clean lines and identify structure ---
     cleaned: list[dict] = []  # {text, role, char_offset}
@@ -266,7 +293,7 @@ def chunk_document(
         nonlocal chunk_index
         if not text.strip():
             return
-        embed_text = f"{title}\n{section}\n{text}" if section else f"{title}\n{text}"
+        embed_text = _compose(section, text.strip())
         chunks.append(Chunk(
             chunk_id=f"{doc_id}_chunk_{chunk_index:03d}",
             doc_id=doc_id,
@@ -357,7 +384,7 @@ def chunk_document(
             if c.char_len < min_chars and (prev.char_len + c.char_len) <= max_chars:
                 merged_text = prev.text + " " + c.text
                 section = prev.section or c.section
-                embed_text = f"{title}\n{section}\n{merged_text}" if section else f"{title}\n{merged_text}"
+                embed_text = _compose(section, merged_text)
                 merged_chunks[-1] = Chunk(
                     chunk_id=prev.chunk_id,
                     doc_id=prev.doc_id,
@@ -372,7 +399,7 @@ def chunk_document(
             elif prev.char_len < min_chars and (prev.char_len + c.char_len) <= max_chars:
                 merged_text = prev.text + " " + c.text
                 section = prev.section or c.section
-                embed_text = f"{title}\n{section}\n{merged_text}" if section else f"{title}\n{merged_text}"
+                embed_text = _compose(section, merged_text)
                 merged_chunks[-1] = Chunk(
                     chunk_id=prev.chunk_id,
                     doc_id=prev.doc_id,
@@ -399,6 +426,24 @@ def chunk_document(
                 page_start=c.page_start,
             )
         chunks = merged_chunks
+
+    # --- Phase 4: Emit a dedicated abstract chunk (curated MARC summary) ---
+    # Kept separate rather than prepended to every chunk: the abstract is a
+    # coherent retrieval unit on its own, and prepending it would make all of a
+    # document's chunks look alike and dilute one another.
+    abstract_text = (abstract or "").strip()
+    if abstract_text:
+        section = "المستخلص"
+        chunks.append(Chunk(
+            chunk_id=f"{doc_id}_chunk_abstract",
+            doc_id=doc_id,
+            text=abstract_text,
+            embed_text=_compose(section, abstract_text),
+            section=section,
+            char_len=len(abstract_text),
+            chunk_index=len(chunks),
+            page_start=None,
+        ))
 
     total_chars = sum(c.char_len for c in chunks)
 

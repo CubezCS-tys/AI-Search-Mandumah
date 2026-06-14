@@ -171,7 +171,8 @@ def _find_shards(input_dir: Path) -> list[Path]:
 # file-hash store after successful chunking, or None when not applicable.
 
 
-def _iter_dir_docs(remaining: list[Path], file_hashes: dict[str, str], progress: dict):
+def _iter_dir_docs(remaining: list[Path], file_hashes: dict[str, str], progress: dict,
+                   marc_lookup=None):
     """Yield records from per-article Azure DI JSON files (--input-dir mode)."""
     for json_path in remaining:
         doc_id = json_path.stem
@@ -185,13 +186,15 @@ def _iter_dir_docs(remaining: list[Path], file_hashes: dict[str, str], progress:
                 data = json.load(f)
             content = data.get("content", "")
             fhash = (json_path.name, current_fhash) if current_fhash else None
-            yield doc_id, content, _extract_metadata_from_path(json_path), fhash
+            meta = _merge_marc(_extract_metadata_from_path(json_path), doc_id, marc_lookup, progress)
+            yield doc_id, content, meta, fhash
         except Exception as e:
             logger.error("Reading failed for %s: %s", doc_id, e, exc_info=True)
             progress["failed"].append(doc_id)
 
 
-def _iter_shard_docs(shards: list[Path], processed_ids: set[str], progress: dict):
+def _iter_shard_docs(shards: list[Path], processed_ids: set[str], progress: dict,
+                     marc_lookup=None):
     """Yield records from JSONL content shards (--input-jsonl mode).
 
     Resume filtering happens here (the shard is the unit of storage, not the
@@ -216,6 +219,7 @@ def _iter_shard_docs(shards: list[Path], processed_ids: set[str], progress: dict
                     meta = _extract_metadata_from_id(doc_id)
                     if rec.get("batch"):
                         meta["batch"] = rec["batch"]
+                    _merge_marc(meta, doc_id, marc_lookup, progress)
                     yield doc_id, rec.get("content", ""), meta, None
         except Exception as e:
             logger.error("Failed to read shard %s: %s", shard, e, exc_info=True)
@@ -285,6 +289,61 @@ def _extract_metadata_from_id(doc_id: str) -> dict:
 def _extract_metadata_from_path(json_path: Path) -> dict:
     """Extract journal/volume/issue/article metadata from the file path and ID."""
     return _extract_metadata_from_id(json_path.stem)
+
+
+# JSON-encoded list columns in the MARC sidecar (see extract_marc_metadata.py).
+_MARC_LIST_COLS = ("keywords", "authors", "database")
+
+
+def _open_marc_lookup(marc_db: str):
+    """Open the MARC metadata sidecar read-only and return (lookup_fn, conn).
+
+    lookup_fn(doc_id) -> dict of non-empty fields (list columns decoded), or
+    None when the document has no catalogue record. The connection is opened
+    with check_same_thread=False because the chunker thread consumes the
+    record iterator that calls the lookup.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(f"file:{marc_db}?mode=ro", uri=True, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='marc'"
+    ).fetchone()
+    if table is None:
+        conn.close()
+        raise ValueError(f"No 'marc' table found in {marc_db}")
+
+    def lookup(doc_id: str) -> dict | None:
+        row = conn.execute("SELECT * FROM marc WHERE doc_id = ?", (doc_id,)).fetchone()
+        if row is None:
+            return None
+        out: dict = {}
+        for key in row.keys():
+            val = row[key]
+            if val is None or val == "":
+                continue
+            if key in _MARC_LIST_COLS:
+                try:
+                    val = json.loads(val)
+                except (ValueError, TypeError):
+                    pass
+            out[key] = val
+        return out
+
+    return lookup, conn
+
+
+def _merge_marc(meta: dict, doc_id: str, marc_lookup, progress: dict) -> dict:
+    """Merge MARC sidecar fields into a document's metadata dict in place."""
+    if marc_lookup is None:
+        return meta
+    record = marc_lookup(doc_id)
+    if record:
+        meta.update(record)
+    else:
+        progress["marc_missing"] = progress.get("marc_missing", 0) + 1
+    return meta
 
 
 # ── Collection management ───────────────────────────────────────────────
@@ -360,6 +419,15 @@ def create_collection(client, collection_name: str, force_recreate: bool = False
         ("journal_id", models.PayloadSchemaType.KEYWORD),
         ("section", models.PayloadSchemaType.KEYWORD),
         ("title", models.PayloadSchemaType.TEXT),
+        # MARC metadata filters (populated when --marc-db is supplied)
+        ("journal", models.PayloadSchemaType.KEYWORD),
+        ("authors", models.PayloadSchemaType.KEYWORD),
+        ("year", models.PayloadSchemaType.KEYWORD),
+        ("country", models.PayloadSchemaType.KEYWORD),
+        ("database", models.PayloadSchemaType.KEYWORD),
+        ("category", models.PayloadSchemaType.KEYWORD),
+        ("issn", models.PayloadSchemaType.KEYWORD),
+        ("keywords", models.PayloadSchemaType.KEYWORD),
     ]:
         client.create_payload_index(
             collection_name=collection_name,
@@ -442,7 +510,13 @@ def _chunk_worker(
                     progress["failed"].append(doc_id)
                     continue
 
-                result = chunk_document(content, doc_id)
+                meta = doc_meta or {}
+                result = chunk_document(
+                    content, doc_id,
+                    title=meta.get("title"),
+                    keywords=meta.get("keywords"),
+                    abstract=meta.get("abstract"),
+                )
 
                 if not result.chunks:
                     logger.warning("Skipping %s: no chunks produced", doc_id)
@@ -694,6 +768,7 @@ def ingest_documents(
     force_recreate: bool = False,
     normalize_arabic: bool = True,
     input_jsonl: str | None = None,
+    marc_db: str | None = None,
 ):
     """
     Main ingestion pipeline with async OpenAI embeddings.
@@ -716,6 +791,11 @@ def ingest_documents(
         input_jsonl: Path to a directory of *.jsonl(.gz) content shards
             (from scripts/extract_content.py). Exactly one of input_dir /
             input_jsonl must be given.
+        marc_db: Optional path to the MARC metadata sidecar SQLite DB (from
+            scripts/extract_marc_metadata.py). When given, each document is
+            enriched with its catalogue record: authoritative title + keywords
+            are folded into the embedded text, an abstract chunk is emitted
+            where present, and bibliographic fields are stored as payload.
     """
     from backend.pipeline.embedder import OpenAIEmbedder
 
@@ -738,6 +818,13 @@ def ingest_documents(
     file_hashes = _load_file_hashes(file_hash_path) if resume else {}
     processed_ids = set(checkpoint["processed"])
 
+    # Optional MARC metadata sidecar (authoritative title/keywords/abstract + payload)
+    marc_lookup = None
+    marc_conn = None
+    if marc_db:
+        marc_lookup, marc_conn = _open_marc_lookup(marc_db)
+        logger.info("MARC sidecar loaded: %s", marc_db)
+
     # Shared progress state (record iterators report read failures into it)
     progress = {
         "processed_docs": 0,
@@ -746,6 +833,7 @@ def ingest_documents(
         "failed": [],
         "skipped_file_dup": 0,
         "skipped_para_dup": 0,
+        "marc_missing": 0,
     }
 
     # Build the document record source
@@ -757,7 +845,7 @@ def ingest_documents(
             logger.warning("No content shards (*.jsonl / *.jsonl.gz) found!")
             return
 
-        records = _iter_shard_docs(shards, processed_ids, progress)
+        records = _iter_shard_docs(shards, processed_ids, progress, marc_lookup)
         if limit > 0:
             records = islice(records, limit)
             total_docs = limit
@@ -793,11 +881,14 @@ def ingest_documents(
             logger.info("All documents already processed!")
             return
         total_docs = len(remaining)
-        records = _iter_dir_docs(remaining, file_hashes, progress)
+        records = _iter_dir_docs(remaining, file_hashes, progress, marc_lookup)
 
     # Dry-run: pre-scan only
     if dry_run:
         _dry_run_scan(records, para_hashes)
+        if marc_conn is not None:
+            logger.info("MARC: %d documents had no catalogue record", progress["marc_missing"])
+            marc_conn.close()
         return
 
     # Initialize embedder
@@ -974,9 +1065,15 @@ def ingest_documents(
         "no_write": no_write,
         "normalize_arabic": normalize_arabic,
         "max_concurrent": max_concurrent,
+        "marc_db": marc_db,
+        "marc_missing": progress["marc_missing"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_manifest(manifest_path, manifest)
+
+    if marc_conn is not None:
+        logger.info("MARC: %d documents had no catalogue record", progress["marc_missing"])
+        marc_conn.close()
 
     logger.info(
         "Ingestion complete: %d docs, %d chunks in %.1fs (%.1f chunks/sec) | "
@@ -998,6 +1095,7 @@ def main():
     src = parser.add_mutually_exclusive_group(required=True)
     src.add_argument("--input-dir", help="Path to output/ directory of per-article JSON files")
     src.add_argument("--input-jsonl", help="Path to directory of *.jsonl(.gz) content shards")
+    parser.add_argument("--marc-db", help="Path to MARC metadata sidecar (scripts/extract_marc_metadata.py)")
     parser.add_argument("--collection", default="academic_articles_v2", help="Qdrant collection name")
     parser.add_argument("--qdrant-url", default="http://localhost:6333", help="Qdrant server URL")
     parser.add_argument("--batch-size", type=int, default=100, help="Texts per OpenAI API call")
@@ -1020,6 +1118,7 @@ def main():
     ingest_documents(
         input_dir=args.input_dir,
         input_jsonl=args.input_jsonl,
+        marc_db=args.marc_db,
         collection_name=args.collection,
         qdrant_url=args.qdrant_url,
         batch_size=args.batch_size,
