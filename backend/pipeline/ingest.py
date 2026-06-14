@@ -401,6 +401,7 @@ def create_collection(client, collection_name: str, force_recreate: bool = False
         sparse_vectors_config={
             "sparse": models.SparseVectorParams(
                 modifier=models.Modifier.IDF,
+                index=models.SparseIndexParams(on_disk=True),
             ),
         },
         hnsw_config=models.HnswConfigDiff(on_disk=True),
@@ -490,6 +491,10 @@ def _chunk_worker(
     batch_chunks: list[Chunk] = []
     batch_payloads: list[dict] = []
     batch_doc_ids: list[str] = []
+    # Guard against silent point overwrites: a doc_id appearing twice in one run
+    # would regenerate identical chunk_ids (-> identical point ids) and clobber
+    # the earlier vectors. We refuse the second occurrence loudly instead.
+    seen_doc_ids: set[str] = set()
 
     try:
         for doc_id, content, doc_meta, fhash in records:
@@ -504,6 +509,15 @@ def _chunk_worker(
                     progress["skipped_file_dup"] += 1
                     batch_doc_ids.append(doc_id)
                     continue
+
+                if doc_id in seen_doc_ids:
+                    logger.error(
+                        "DUPLICATE doc_id '%s' within this run — skipping to avoid "
+                        "overwriting already-embedded vectors", doc_id,
+                    )
+                    progress["duplicate_doc_ids"] = progress.get("duplicate_doc_ids", 0) + 1
+                    continue
+                seen_doc_ids.add(doc_id)
 
                 if not content or len(content.strip()) < 100:
                     logger.warning("Skipping %s: content too short", doc_id)
@@ -834,6 +848,7 @@ def ingest_documents(
         "skipped_file_dup": 0,
         "skipped_para_dup": 0,
         "marc_missing": 0,
+        "duplicate_doc_ids": 0,
     }
 
     # Build the document record source
@@ -1067,6 +1082,7 @@ def ingest_documents(
         "max_concurrent": max_concurrent,
         "marc_db": marc_db,
         "marc_missing": progress["marc_missing"],
+        "duplicate_doc_ids": progress["duplicate_doc_ids"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_manifest(manifest_path, manifest)
