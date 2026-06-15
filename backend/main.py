@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 from backend.services.runtime import (
     _DOC_ID_RE,
     doc_dir as _doc_dir,
+    ensure_doc_file_async,
     load_doc_content_cached as _load_doc_content_cached,
     get_searcher,
     dedup_results,
@@ -428,9 +429,9 @@ async def get_pdf(doc_id: str):
     if not _DOC_ID_RE.match(doc_id):
         raise HTTPException(400, "Invalid document ID format")
 
-    pdf_path = _doc_dir(doc_id) / f"{doc_id}.pdf"
+    pdf_path = await ensure_doc_file_async(doc_id, f"{doc_id}.pdf")
 
-    if not pdf_path.is_file():
+    if pdf_path is None:
         raise HTTPException(404, "PDF not found")
 
     return FileResponse(str(pdf_path), media_type="application/pdf")
@@ -441,6 +442,14 @@ async def get_pdf(doc_id: str):
 # LRU cache for raster dimensions (avoids re-opening the PDF for every OCR request)
 _RASTER_DIMS_CACHE_MAX = 100
 _raster_dims_cache: OrderedDict[str, dict[int, tuple[int, int]]] = OrderedDict()
+
+# LRU cache for the fully-assembled OCR pages, keyed by doc_id. The source OCR
+# JSON is multi-MB (3-9MB); without this each /ocr request re-reads and re-parses
+# it into a large Python structure. Bounded by doc count — keep modest since each
+# entry can be sizeable.
+_OCR_PAGES_CACHE_MAX = int(os.getenv("OCR_PAGES_CACHE_MAX", "24"))
+_ocr_pages_cache: OrderedDict[str, list] = OrderedDict()
+_ocr_pages_lock = threading.Lock()
 
 
 def _get_raster_dims(pdf_path: Path) -> dict[int, tuple[int, int]]:
@@ -500,12 +509,27 @@ async def get_ocr(doc_id: str):
     if not _DOC_ID_RE.match(doc_id):
         raise HTTPException(400, "Invalid document ID format")
 
-    doc_path = _doc_dir(doc_id)
-    json_path = doc_path / f"{doc_id}.json"
-    if not json_path.is_file():
+    with _ocr_pages_lock:
+        cached = _ocr_pages_cache.get(doc_id)
+        if cached is not None:
+            _ocr_pages_cache.move_to_end(doc_id)
+    if cached is not None:
+        return JSONResponse({"pages": cached})
+
+    json_path = await ensure_doc_file_async(doc_id, f"{doc_id}.json")
+    if json_path is None:
         raise HTTPException(404, "OCR JSON not found")
 
-    pages = await asyncio.to_thread(_load_ocr_data, json_path, doc_path / f"{doc_id}.pdf")
+    pdf_path = await ensure_doc_file_async(doc_id, f"{doc_id}.pdf")
+    # raster dims are best-effort — fall back to a non-existent path if no PDF
+    pdf_arg = pdf_path if pdf_path is not None else _doc_dir(doc_id) / f"{doc_id}.pdf"
+    pages = await asyncio.to_thread(_load_ocr_data, json_path, pdf_arg)
+
+    with _ocr_pages_lock:
+        _ocr_pages_cache[doc_id] = pages
+        _ocr_pages_cache.move_to_end(doc_id)
+        if len(_ocr_pages_cache) > _OCR_PAGES_CACHE_MAX:
+            _ocr_pages_cache.popitem(last=False)
     return JSONResponse({"pages": pages})
 
 
@@ -558,8 +582,8 @@ async def get_page_image(doc_id: str, page_num: int):
         return Response(content=img_bytes, media_type="image/webp",
                         headers={"ETag": etag, "Cache-Control": "public, max-age=86400"})
 
-    pdf_path = _doc_dir(doc_id) / f"{doc_id}.pdf"
-    if not pdf_path.is_file():
+    pdf_path = await ensure_doc_file_async(doc_id, f"{doc_id}.pdf")
+    if pdf_path is None:
         raise HTTPException(404, "PDF not found")
 
     try:
@@ -610,8 +634,8 @@ async def chat(req: ChatRequest):
         if not _DOC_ID_RE.match(cid):
             raise HTTPException(400, f"Invalid compare document ID format: {cid}")
 
-    json_path = _doc_dir(req.doc_id) / f"{req.doc_id}.json"
-    if not json_path.is_file():
+    json_path = await ensure_doc_file_async(req.doc_id, f"{req.doc_id}.json")
+    if json_path is None:
         raise HTTPException(404, "Document not found")
 
     content = await asyncio.to_thread(_load_doc_content_cached, json_path)
@@ -625,8 +649,8 @@ async def chat(req: ChatRequest):
     for cid in req.compare_doc_ids:
         if cid == req.doc_id:
             continue  # skip duplicates
-        cpath = _doc_dir(cid) / f"{cid}.json"
-        if cpath.is_file():
+        cpath = await ensure_doc_file_async(cid, f"{cid}.json")
+        if cpath is not None:
             ccontent = await asyncio.to_thread(_load_doc_content_cached, cpath)
             if ccontent and ccontent.strip():
                 compare_contents.append((cid, ccontent))
@@ -675,8 +699,8 @@ async def analyze(doc_id: str):
             headers={"X-Cache": "HIT"},
         )
 
-    json_path = _doc_dir(doc_id) / f"{doc_id}.json"
-    if not json_path.is_file():
+    json_path = await ensure_doc_file_async(doc_id, f"{doc_id}.json")
+    if json_path is None:
         raise HTTPException(404, "Document not found")
 
     content = await asyncio.to_thread(_load_doc_content_cached, json_path)

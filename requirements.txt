@@ -97,3 +97,4 @@ warc3-wet-clueweb09==0.2.5
 xxhash==3.6.0
 yarl==1.23.0
 zlib-state==0.1.10
+boto3>=1.34
