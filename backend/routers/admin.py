@@ -81,6 +81,28 @@ def _client():
     return get_searcher().client
 
 
+def _legacy_dense_search(collection: str, dense_vector, limit: int) -> list[dict]:
+    """Dense kNN via the legacy ``/points/search`` REST endpoint.
+
+    Qdrant 1.7.x has no Query API (``query_points`` 404s) and qdrant-client 1.17
+    dropped ``.search``, so we hit the REST endpoint directly. Returns a list of
+    ``{"id", "score", "payload"}`` dicts.
+    """
+    import requests
+
+    resp = requests.post(
+        f"{_QDRANT_URL}/collections/{collection}/points/search",
+        json={
+            "vector": {"name": "dense", "vector": list(dense_vector)},
+            "limit": limit,
+            "with_payload": True,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json().get("result", [])
+
+
 _searchers: dict[str, object] = {}
 _searchers_lock = threading.Lock()
 
@@ -99,22 +121,64 @@ def _searcher_for(collection: str):
     return s
 
 
-# ── Small TTL cache for the (heavy) doc_id facet ──────────────────────────
+# ── TTL cache for the (heavy) full-scroll aggregation ─────────────────────
+# Qdrant < 1.12 has no server-side facet API (and qdrant-client 1.17 talking to
+# an old server gets a 404), so we aggregate doc_id / journal / section counts
+# client-side via one payload-only scroll, cached to amortise the cost.
 
-_facet_cache: dict[str, tuple[float, list[tuple[str, int]]]] = {}
-_FACET_TTL = 30.0
+from collections import Counter
+
+_agg_cache: dict[str, tuple[float, dict]] = {}
+_AGG_TTL = 600.0  # 10 min — corpus is static between ingests; the full scroll is ~50s
+
+
+def _aggregate(collection: str) -> dict:
+    """One payload-only scroll → doc/journal/section aggregates, cached 120s.
+
+    Returns ``{"docs": [(doc_id, chunk_count), ...] sorted by doc_id,
+    "journals": Counter, "sections": Counter}``. Replaces the server-side
+    facet API, which is unavailable on Qdrant 1.7.x.
+    """
+    now = time.time()
+    cached = _agg_cache.get(collection)
+    if cached and (now - cached[0]) < _AGG_TTL:
+        return cached[1]
+
+    client = _client()
+    doc_counts: dict[str, int] = {}
+    journals: Counter = Counter()
+    sections: Counter = Counter()
+    next_off = None
+    while True:
+        pts, next_off = client.scroll(
+            collection_name=collection,
+            limit=10000,
+            offset=next_off,
+            with_payload=["doc_id", "journal", "journal_id", "section"],
+            with_vectors=False,
+        )
+        for p in pts:
+            pl = p.payload or {}
+            did = pl.get("doc_id")
+            if did is not None:
+                doc_counts[str(did)] = doc_counts.get(str(did), 0) + 1
+            jour = pl.get("journal") or pl.get("journal_id")
+            if jour:
+                journals[str(jour)] += 1
+            sect = pl.get("section")
+            if sect:
+                sections[str(sect)] += 1
+        if next_off is None:
+            break
+
+    result = {"docs": sorted(doc_counts.items()), "journals": journals, "sections": sections}
+    _agg_cache[collection] = (now, result)
+    return result
 
 
 def _doc_facet(collection: str) -> list[tuple[str, int]]:
-    """``[(doc_id, chunk_count), ...]`` sorted by doc_id, cached for 30s."""
-    now = time.time()
-    cached = _facet_cache.get(collection)
-    if cached and (now - cached[0]) < _FACET_TTL:
-        return cached[1]
-    resp = _client().facet(collection_name=collection, key="doc_id", limit=1_000_000)
-    docs = sorted((str(h.value), int(h.count)) for h in resp.hits)
-    _facet_cache[collection] = (now, docs)
-    return docs
+    """``[(doc_id, chunk_count), ...]`` sorted by doc_id (via cached aggregation)."""
+    return _aggregate(collection)["docs"]
 
 
 def _safe_dump(obj):
@@ -231,16 +295,14 @@ def overview(
 ):
     """Distribution stats: docs, top journals, sections, chunk-length histogram."""
     client = _client()
-    docs = _doc_facet(collection)
+    agg = _aggregate(collection)
+    docs = agg["docs"]
     total_chunks = sum(c for _, c in docs)
 
-    # Journal & section breakdowns via facet (cheap, server-side).
-    def _facet_breakdown(key: str, limit: int = 15):
-        try:
-            resp = client.facet(collection_name=collection, key=key, limit=limit)
-            return [{"value": str(h.value), "count": int(h.count)} for h in resp.hits]
-        except Exception:  # noqa: BLE001 — field may not be indexed
-            return []
+    # Journal & section breakdowns from the same client-side aggregation
+    # (Qdrant 1.7.x has no facet API). Counts are per-chunk, matching facet.
+    def _top(counter: Counter, limit: int = 15):
+        return [{"value": v, "count": c} for v, c in counter.most_common(limit)]
 
     # Chunk-length histogram from a payload-only sample scroll.
     points, _ = client.scroll(
@@ -269,8 +331,8 @@ def overview(
         "avg_char_len": avg_len,
         "char_len_histogram": histogram,
         "histogram_sample": len(lengths),
-        "top_journals": _facet_breakdown("journal") or _facet_breakdown("journal_id"),
-        "top_sections": _facet_breakdown("section"),
+        "top_journals": _top(agg["journals"]),
+        "top_sections": _top(agg["sections"]),
     }
 
 
@@ -442,23 +504,17 @@ def similar(body: SimilarRequest, user: str = Depends(require_admin)):
     if dense is None:
         raise HTTPException(status_code=400, detail="Point has no dense vector")
 
-    hits = client.query_points(
-        collection_name=body.collection,
-        query=dense,
-        using="dense",
-        limit=body.top_k + 1,
-        with_payload=True,
-    ).points
+    hits = _legacy_dense_search(body.collection, dense, body.top_k + 1)
 
     out = []
     for h in hits:
-        if str(h.id) == body.point_id:
+        if str(h["id"]) == body.point_id:
             continue
-        p = h.payload or {}
+        p = h.get("payload") or {}
         out.append(
             {
-                "point_id": str(h.id),
-                "score": round(float(h.score), 4),
+                "point_id": str(h["id"]),
+                "score": round(float(h["score"]), 4),
                 "doc_id": p.get("doc_id"),
                 "title": p.get("title"),
                 "section": p.get("section"),
