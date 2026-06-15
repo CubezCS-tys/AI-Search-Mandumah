@@ -78,6 +78,7 @@ class Searcher:
         from qdrant_client import QdrantClient
 
         self.client = QdrantClient(url=qdrant_url, timeout=30)
+        self._qdrant_url = qdrant_url.rstrip("/")
         self.collection_name = collection_name
         self._embedder = embedder
 
@@ -146,62 +147,76 @@ class Searcher:
         reranked = self._rerank_results(query, results)
         return self._filter_low_confidence_candidates(reranked)
 
-    def _hybrid_search(self, emb, top_k, prefetch_k, query_filter):
-        """Dense + sparse with RRF fusion."""
-        from qdrant_client import models
+    # NOTE: The Query API (query_points / server-side RRF fusion) requires
+    # Qdrant >= 1.10/1.12. Production runs Qdrant 1.7.4, so dense and sparse
+    # go through the legacy /points/search REST endpoint and hybrid fuses the
+    # two result lists with RRF client-side.
 
-        return self.client.query_points(
-            collection_name=self.collection_name,
-            prefetch=[
-                models.Prefetch(
-                    query=emb.dense,
-                    using="dense",
-                    limit=prefetch_k,
-                    filter=query_filter,
-                ),
-                models.Prefetch(
-                    query=models.SparseVector(
-                        indices=emb.sparse_indices,
-                        values=emb.sparse_values,
-                    ),
-                    using="sparse",
-                    limit=prefetch_k,
-                    filter=query_filter,
-                ),
-            ],
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
-            limit=top_k,
-            with_payload=True,
-        ).points
+    def _legacy_search(self, named_vector: dict, top_k: int, query_filter):
+        """Single-vector kNN via the legacy ``/points/search`` REST endpoint.
+
+        Returns objects exposing ``.id``, ``.score`` and ``.payload`` (the same
+        attributes :meth:`_point_to_result` reads).
+        """
+        import requests
+        from types import SimpleNamespace
+
+        body: dict = {"vector": named_vector, "limit": top_k, "with_payload": True}
+        if query_filter is not None:
+            body["filter"] = query_filter.model_dump(mode="json", exclude_none=True)
+        resp = requests.post(
+            f"{self._qdrant_url}/collections/{self.collection_name}/points/search",
+            json=body,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return [
+            SimpleNamespace(id=h["id"], score=h["score"], payload=h.get("payload") or {})
+            for h in resp.json().get("result", [])
+        ]
+
+    @staticmethod
+    def _rrf_fuse(result_lists, top_k, k: int = 60):
+        """Reciprocal Rank Fusion over several ranked result lists (client-side)."""
+        scores: dict = {}
+        points: dict = {}
+        for results in result_lists:
+            for rank, h in enumerate(results, start=1):
+                scores[h.id] = scores.get(h.id, 0.0) + 1.0 / (k + rank)
+                points[h.id] = h
+        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
+        fused = []
+        for pid, sc in ranked:
+            p = points[pid]
+            p.score = sc  # replace per-vector score with the fused RRF score
+            fused.append(p)
+        return fused
+
+    def _dense_vector(self, emb) -> dict:
+        return {"name": "dense", "vector": [float(x) for x in emb.dense]}
+
+    def _sparse_vector(self, emb) -> dict:
+        return {
+            "name": "sparse",
+            "vector": {
+                "indices": [int(i) for i in emb.sparse_indices],
+                "values": [float(v) for v in emb.sparse_values],
+            },
+        }
+
+    def _hybrid_search(self, emb, top_k, prefetch_k, query_filter):
+        """Dense + sparse with RRF fusion (client-side; Qdrant 1.7.4 compatible)."""
+        dense = self._legacy_search(self._dense_vector(emb), prefetch_k, query_filter)
+        sparse = self._legacy_search(self._sparse_vector(emb), prefetch_k, query_filter)
+        return self._rrf_fuse([dense, sparse], top_k)
 
     def _dense_search(self, emb, top_k, query_filter):
         """Dense vector search only."""
-        from qdrant_client import models
-
-        return self.client.query_points(
-            collection_name=self.collection_name,
-            query=emb.dense,
-            using="dense",
-            limit=top_k,
-            with_payload=True,
-            query_filter=query_filter,
-        ).points
+        return self._legacy_search(self._dense_vector(emb), top_k, query_filter)
 
     def _sparse_search(self, emb, top_k, query_filter):
         """Sparse vector search only."""
-        from qdrant_client import models
-
-        return self.client.query_points(
-            collection_name=self.collection_name,
-            query=models.SparseVector(
-                indices=emb.sparse_indices,
-                values=emb.sparse_values,
-            ),
-            using="sparse",
-            limit=top_k,
-            with_payload=True,
-            query_filter=query_filter,
-        ).points
+        return self._legacy_search(self._sparse_vector(emb), top_k, query_filter)
 
     def _build_filter(
         self,
