@@ -84,3 +84,6 @@ Thumbs.db
 academic_articles-55213210663201-2026-03-18-19-23-24.snapshot 
 # S3 document cache (local, do not commit)
 .doc_cache/
+
+# Local ingestion data + manifests/checkpoints (multi-GB, not for git)
+content_shards/
