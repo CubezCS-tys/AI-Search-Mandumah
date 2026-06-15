@@ -71,7 +71,22 @@ OUTPUT_DIR=./output
 
 # Optional: lock the API behind a key
 # API_KEY=your-secret-key
+
+# ── Admin / Vector Console (/admin) ──────────────────────────────
+# Username/password for the read-only corpus & vector inspector.
+# CHANGE THESE before exposing the port publicly.
+ADMIN_USER=admin
+ADMIN_PASSWORD=change-me
+# Optional: explicit token-signing secret. If omitted, it is derived from
+# ADMIN_PASSWORD (so changing the password invalidates old sessions).
+# ADMIN_SECRET=some-long-random-string
+# Optional: session lifetime in seconds (default 43200 = 12h)
+# ADMIN_TOKEN_TTL=43200
 ```
+
+> The `QDRANT_URL` above is read by both the search API and the admin console,
+> so pointing it at a **remote** Qdrant (e.g. a bare-metal box) works with no
+> code changes.
 
 ### 3. Start Qdrant
 
@@ -102,6 +117,31 @@ cd frontend && npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+---
+
+## Admin / Vector Console
+
+A read-only operator console for inspecting the live Qdrant collection — browse
+documents, drill into chunks and their dense + sparse vectors, debug retrieval,
+and visualize the vector space.
+
+- **URL:** `http://<host>:3000/admin` (sign in with `ADMIN_USER` / `ADMIN_PASSWORD`)
+- **API:** `/api/admin/*` on the backend, gated by its own username/password
+  (HMAC-signed bearer token — independent of the optional corpus `API_KEY`).
+
+**Features**
+
+| Page | What it shows |
+|---|---|
+| **Overview** | Collection switcher, doc/chunk counts, vector config (dim, distance, quantization, HNSW), chunk-length histogram, journal & section breakdowns |
+| **Documents** | Paginated, filterable list of unique documents → all chunks of a document in reading order |
+| **Chunk inspector** | Full payload + text, the dense vector (norm + per-dim strip), the sparse vector (top weighted terms), and nearest-neighbour chunks |
+| **Explore** | Retrieval debugger (dense vs sparse vs hybrid side by side) and a 2-D PCA **vector map** colored by journal/section/year |
+
+> Because it talks to the backend (which reads `QDRANT_URL`), it works against a
+> remote bare-metal Qdrant unchanged. Set a strong `ADMIN_PASSWORD` (and ideally
+> `ADMIN_SECRET`) before opening the port to the internet.
 
 ---
 

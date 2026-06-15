@@ -106,6 +106,9 @@ async def _api_key_guard(request: Request, call_next):
         is_exempt = (
             request.method == "OPTIONS"
             or request.url.path in _API_KEY_EXEMPT_PATHS
+            # The admin console has its own username/password auth; don't
+            # double-gate it behind the corpus API key.
+            or request.url.path.startswith("/api/admin")
         )
         if not is_exempt and request.headers.get("X-API-Key") != _API_KEY:
             return Response(
@@ -130,6 +133,7 @@ _RATE_LIMITED_PREFIXES = (
     "/api/search",
     "/api/chat",
     "/mcp",
+    "/api/admin/login",  # throttle credential brute-force on the open port
 )
 _rate_window_seconds = 60.0
 _rate_hits: dict[str, list[float]] = {}
@@ -876,6 +880,13 @@ async def delete_conversation_route(conversation_id: str):
     if not deleted:
         raise HTTPException(404, "Conversation not found")
     return JSONResponse(content={"ok": True})
+
+
+# ── Admin / Vector-Inspector console ──────────────────────────────────────
+# Read-only admin API under /api/admin/* (own username/password auth).
+from backend.routers.admin import router as _admin_router
+
+app.include_router(_admin_router)
 
 
 # ── MCP server mount ──────────────────────────────────────────────────────
