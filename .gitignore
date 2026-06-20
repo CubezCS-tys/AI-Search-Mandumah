@@ -87,3 +87,16 @@ academic_articles-55213210663201-2026-03-18-19-23-24.snapshot
 
 # Local ingestion data + manifests/checkpoints (multi-GB, not for git)
 content_shards/
+
+# Local agent-OS layer (Claude Code / Codex): local-only, never commit.
+# .claude/ is already ignored above; ignore the rest of the OS too.
+/AGENTS.md
+/CLAUDE.md
+/.agent/
+/.codex/
+/.agents/
+# Agent-OS doc subdirs created inside the tracked docs/ dir:
+/docs/architecture/
+/docs/decisions/
+/docs/runbooks/
+/docs/specs/
