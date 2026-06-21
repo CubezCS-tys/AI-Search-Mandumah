@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { streamSynthesis } from "@/lib/api";
 import type { SearchMode, SearchResultItem, SynthesisMode, EvidenceDoc, EvidenceStance } from "@/types/search";
+import { EvidenceConsole } from "./EvidenceConsole";
 
 interface SynthesisPanelProps {
   query: string;
@@ -383,6 +384,9 @@ export default function SynthesisPanel({
   const [showRefs, setShowRefs] = useState(true);
   const [activeId, setActiveId] = useState("");
   const [evidence, setEvidence] = useState<EvidenceDoc[]>([]);
+  // Answer vs the richer Evidence Console (PLAN-03). Additive tab; the answer
+  // view (the fragile streaming markdown) is unchanged and stays the default.
+  const [view, setView] = useState<"answer" | "evidence">("answer");
   const abortRef = useRef<AbortController | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isAdvanced = synthesisMode === "advanced";
@@ -403,6 +407,7 @@ export default function SynthesisPanel({
     setText("");
     setError("");
     setEvidence([]);
+    setView("answer");
     setState("streaming");
     abortRef.current = new AbortController();
     try {
@@ -694,6 +699,22 @@ export default function SynthesisPanel({
               متقدم
             </button>
           </div>
+          {isAdvanced && evidence.length > 0 && (
+            <div className="flex items-center gap-1 rounded-full border border-border bg-bg-elevated/90 p-1">
+              <button
+                onClick={() => setView("answer")}
+                className={`${MODE_TOGGLE_BASE} ${view === "answer" ? MODE_TOGGLE_ACTIVE : MODE_TOGGLE_INACTIVE}`}
+              >
+                التحليل
+              </button>
+              <button
+                onClick={() => setView("evidence")}
+                className={`${MODE_TOGGLE_BASE} ${view === "evidence" ? MODE_TOGGLE_ACTIVE : MODE_TOGGLE_INACTIVE}`}
+              >
+                وحدة الأدلة
+              </button>
+            </div>
+          )}
           {state === "streaming" && (
             <button
               onClick={handleStop}
@@ -786,6 +807,8 @@ export default function SynthesisPanel({
           <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />
           <p className="font-arabic text-sm">{error}</p>
         </div>
+      ) : view === "evidence" && evidence.length > 0 ? (
+        <EvidenceConsole evidence={evidence} />
       ) : (
         <div ref={contentRef} className="prose prose-sm max-w-none font-arabic text-[14px] leading-relaxed text-text-primary [direction:rtl] [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-[13px] [&_h3]:font-bold [&_h3]:text-text-primary [&_li]:mb-1.5 [&_li]:leading-[1.8] [&_ol]:mt-1 [&_p]:mb-3 [&_p]:leading-[1.85] [&_strong]:text-text-primary [&_ul]:mt-1">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: CitationLink, h3: Heading }}>
@@ -797,8 +820,9 @@ export default function SynthesisPanel({
         </div>
       )}
 
-      {/* Structured evidence cards (advanced mode) */}
-      {state !== "error" && evidence.length > 0 && (
+      {/* Structured evidence cards (advanced mode): the rich console is the
+          evidence tab; the inline cards stay in the answer view. */}
+      {state !== "error" && view === "answer" && evidence.length > 0 && (
         <>
           <AgreementMeter evidence={evidence} />
           <ComparisonMatrix evidence={evidence} onCitationClick={onCitationClick} />
