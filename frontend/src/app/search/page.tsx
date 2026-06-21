@@ -13,6 +13,7 @@ import ResultSkeleton from "@/components/search/ResultSkeleton";
 import SynthesisPanel from "@/components/search/SynthesisPanel";
 import ReferenceCarousel from "@/components/search/ReferenceCarousel";
 import DocumentPreview from "@/components/search/DocumentPreview";
+import { ScoreReactor } from "@/components/search/ScoreReactor";
 import { useSearch } from "@/lib/hooks/useSearch";
 import type { SearchMode, SearchResponse, SearchResultItem, SynthesisMode } from "@/types/search";
 
@@ -128,6 +129,8 @@ function SearchPageContent() {
   const modeParam = (searchParams.get("mode") || "hybrid") as SearchMode;
   const synthesisParam = searchParams.get("synth") === "advanced" ? "advanced" : "standard";
   const hydeParam = searchParams.get("hyde") === "1";
+  // Score Reactor lab mode (PLAN-02): opt-in, mutually exclusive with synthesis.
+  const labMode = searchParams.get("lab") === "1";
 
   const [query, setQuery] = useState(queryParam);
   const [mode, setMode] = useState<SearchMode>(modeParam);
@@ -306,25 +309,29 @@ function SearchPageContent() {
                   </div>
                 </div>
               )}
-            {!synthesisActive && data.results.length > 0 && (
+            {!synthesisActive && !labMode && data.results.length > 0 && (
               <SearchFacets
                 results={data.results}
                 filters={filters}
                 onChange={handleFilterChange}
               />
             )}
-            <SearchResultsWorkspace
-              key={searchContextKey}
-              searchKey={searchContextKey}
-              query={query}
-              data={data}
-              searchMode={mode}
-              hydeEnabled={hydeEnabled}
-              filters={filters}
-              synthesisMode={synthesisMode}
-              onSynthesisModeChange={handleSynthesisModeChange}
-              onActiveChange={setSynthesisActive}
-            />
+            {labMode ? (
+              <ScoreReactor results={data.results} />
+            ) : (
+              <SearchResultsWorkspace
+                key={searchContextKey}
+                searchKey={searchContextKey}
+                query={query}
+                data={data}
+                searchMode={mode}
+                hydeEnabled={hydeEnabled}
+                filters={filters}
+                synthesisMode={synthesisMode}
+                onSynthesisModeChange={handleSynthesisModeChange}
+                onActiveChange={setSynthesisActive}
+              />
+            )}
           </>
         )}
 

@@ -14,7 +14,12 @@ import type {
   Source,
 } from "@/types/chat";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Same-origin (PLAN-00b B1): every call hits "/api/*" and the next.config rewrite
+// forwards it to BACKEND_URL (server-side), keeping the backend host and any API
+// key off the client and letting MSW intercept in the browser. Deprecates
+// NEXT_PUBLIC_API_URL; point a remote backend via BACKEND_URL (server env), not a
+// public client base.
+const API_BASE = "";
 
 export async function search(params: SearchRequest): Promise<SearchResponse> {
   const res = await fetch(`${API_BASE}/api/search`, {
