@@ -14,6 +14,7 @@ import SynthesisPanel from "@/components/search/SynthesisPanel";
 import ReferenceCarousel from "@/components/search/ReferenceCarousel";
 import DocumentPreview from "@/components/search/DocumentPreview";
 import { ScoreReactor } from "@/components/search/ScoreReactor";
+import { PostcardGallery } from "@/components/search/PostcardGallery";
 import { useSearch } from "@/lib/hooks/useSearch";
 import type { SearchMode, SearchResponse, SearchResultItem, SynthesisMode } from "@/types/search";
 
@@ -131,6 +132,8 @@ function SearchPageContent() {
   const hydeParam = searchParams.get("hyde") === "1";
   // Score Reactor lab mode (PLAN-02): opt-in, mutually exclusive with synthesis.
   const labMode = searchParams.get("lab") === "1";
+  // Postcards gallery (PLAN-05): opt-in shareable-card view of the results.
+  const cardsMode = searchParams.get("cards") === "1";
 
   const [query, setQuery] = useState(queryParam);
   const [mode, setMode] = useState<SearchMode>(modeParam);
@@ -309,7 +312,7 @@ function SearchPageContent() {
                   </div>
                 </div>
               )}
-            {!synthesisActive && !labMode && data.results.length > 0 && (
+            {!synthesisActive && !labMode && !cardsMode && data.results.length > 0 && (
               <SearchFacets
                 results={data.results}
                 filters={filters}
@@ -318,6 +321,8 @@ function SearchPageContent() {
             )}
             {labMode ? (
               <ScoreReactor results={data.results} />
+            ) : cardsMode ? (
+              <PostcardGallery results={data.results} />
             ) : (
               <SearchResultsWorkspace
                 key={searchContextKey}
