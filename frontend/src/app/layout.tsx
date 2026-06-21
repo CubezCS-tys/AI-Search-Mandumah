@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Tajawal, Amiri, Playfair_Display } from "next/font/google";
 import "./globals.css";
+import { MotionProvider } from "@/components/ui/motion";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -55,7 +56,7 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${tajawal.variable} ${amiri.variable} ${playfair.variable} antialiased`}
       >
-        {children}
+        <MotionProvider>{children}</MotionProvider>
       </body>
     </html>
   );
