@@ -144,10 +144,18 @@ _rate_lock = threading.Lock()
 
 
 def _client_key(request: Request) -> str:
-    """Identify the caller for rate limiting (proxy-aware, falls back to peer)."""
+    """Identify the caller for rate limiting (proxy-aware, falls back to peer).
+
+    Behind the documented single nginx hop (PRODUCTION.md, $proxy_add_x_forwarded_for),
+    nginx APPENDS the real peer IP to any client-sent X-Forwarded-For, so the
+    RIGHTMOST entry is the trustworthy client IP. Taking the leftmost would let a
+    caller spoof X-Forwarded-For and rotate past the per-IP rate limit, which is
+    the only abuse control on the public /api/insights routes. If the topology
+    ever gains another trusted hop, count back that many entries instead.
+    """
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
-        return fwd.split(",", 1)[0].strip()
+        return fwd.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 
