@@ -1,10 +1,12 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
-// NOTE: @vitejs/plugin-react (for JSX in component/characterization tests) is
-// added in the C0 step. v6 pulls a rolldown native binding that is not present
-// in this environment; use @vitejs/plugin-react@^4 when wiring component tests.
+// JSX/TSX is transformed by vitest's built-in esbuild using React 19's automatic
+// runtime. We deliberately do NOT use @vitejs/plugin-react: v6 pulls a rolldown
+// native binding absent here, and mixing vite versions causes esbuild conflicts.
+// esbuild's automatic JSX is sufficient for component + characterization tests.
 export default defineConfig({
+  esbuild: { jsx: "automatic", jsxImportSource: "react" },
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
