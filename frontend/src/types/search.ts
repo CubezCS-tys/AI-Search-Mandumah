@@ -35,6 +35,18 @@ export interface SearchResultItem {
   chunk_index: number;
   journal_id: string;
   char_len: number;
+  // Score breakdown (PLAN B1): the engine's own sub-signals, exposed for the
+  // Score Reactor. raw_score is a tiny RRF magnitude (not 0..1); normalize per
+  // result set before blending. Optional: older payloads / synthesis re-ingest
+  // may omit them.
+  raw_score?: number;
+  lexical_score?: number;
+  title_score?: number;
+  // MARC bibliographic fields (PLAN B2): plural lists; null until the backfill.
+  authors?: string[] | null;
+  year?: string | null;
+  journal?: string | null;
+  keywords?: string[] | null;
 }
 
 export interface SearchResponse {
