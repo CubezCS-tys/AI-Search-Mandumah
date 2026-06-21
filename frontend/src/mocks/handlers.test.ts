@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { searchFixture, projectionFixture, overviewFixture, similarFixture } from "./fixtures";
+import { searchFixture, projectionFixture, similarFixture } from "./fixtures";
 import { sseStream, synthesizeFrames, corpusChatFrames, synthesisEvidence } from "./sse";
 
 // The mock DATA layer (fixtures + SSE builders) is unit-tested directly here.
@@ -76,8 +76,7 @@ describe("insights fixtures", () => {
     expect(projectionFixture.explained_variance).toHaveLength(2);
     expect(projectionFixture.points.length).toBeGreaterThan(0);
   });
-  it("overview + similar are well-formed", () => {
-    expect(overviewFixture.documents).toBeGreaterThan(0);
+  it("similar is well-formed", () => {
     expect(similarFixture.results.length).toBeGreaterThan(0);
   });
 });

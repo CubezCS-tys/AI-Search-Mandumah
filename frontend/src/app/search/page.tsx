@@ -183,9 +183,11 @@ function SearchPageContent() {
       if (filters.journalId) params.set("journal", filters.journalId);
       if (filters.section) params.set("section", filters.section);
       if (filters.docId) params.set("doc", filters.docId);
+      if (labMode) params.set("lab", "1");
+      if (cardsMode) params.set("cards", "1");
       router.replace(`/search?${params.toString()}`, { scroll: false });
     },
-    [router, filters, synthesisMode]
+    [router, filters, synthesisMode, labMode, cardsMode]
   );
 
   const handleFilterChange = useCallback(
@@ -199,9 +201,11 @@ function SearchPageContent() {
       if (newFilters.journalId) params.set("journal", newFilters.journalId);
       if (newFilters.section) params.set("section", newFilters.section);
       if (newFilters.docId) params.set("doc", newFilters.docId);
+      if (labMode) params.set("lab", "1");
+      if (cardsMode) params.set("cards", "1");
       router.replace(`/search?${params.toString()}`, { scroll: false });
     },
-    [router, query, mode, synthesisMode, hydeEnabled]
+    [router, query, mode, synthesisMode, hydeEnabled, labMode, cardsMode]
   );
 
   const handleSynthesisModeChange = useCallback(
@@ -214,9 +218,11 @@ function SearchPageContent() {
       if (filters.journalId) params.set("journal", filters.journalId);
       if (filters.section) params.set("section", filters.section);
       if (filters.docId) params.set("doc", filters.docId);
+      if (labMode) params.set("lab", "1");
+      if (cardsMode) params.set("cards", "1");
       router.replace(`/search?${params.toString()}`, { scroll: false });
     },
-    [router, query, mode, filters, hydeEnabled],
+    [router, query, mode, filters, hydeEnabled, labMode, cardsMode],
   );
 
   return (

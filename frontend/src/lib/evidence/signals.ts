@@ -54,7 +54,9 @@ export function consensus(evidence: EvidenceDoc[]): Consensus {
   const against = weighted.contrast + weighted.mixed;
   let lead = "توافق غير حاسم";
   if (total > 0) {
-    if (support > against * 1.5) lead = "توافق على الأثر";
+    // No decisive stances (all neutral/descriptive) -> not "partial agreement".
+    if (support === 0 && against === 0) lead = "مصادر وصفية غير حاسمة";
+    else if (support > against * 1.5) lead = "توافق على الأثر";
     else if (against > support * 1.5) lead = "تعارض غالب";
     else lead = "توافق جزئي";
   }

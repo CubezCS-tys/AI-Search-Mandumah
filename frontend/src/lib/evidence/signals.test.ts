@@ -27,6 +27,12 @@ describe("consensus (quality-weighted)", () => {
   it("empty evidence yields a 'no sources' verdict", () => {
     expect(consensus([]).verdict).toContain("لا مصادر");
   });
+  it("labels all-neutral sources as descriptive, not partial agreement", () => {
+    const c = consensus([doc(0, { stance: "neutral" }), doc(1, { stance: "neutral" })]);
+    expect(c.total).toBe(2);
+    expect(c.verdict).toContain("مصادر وصفية غير حاسمة");
+    expect(c.verdict).not.toContain("توافق جزئي");
+  });
 });
 
 describe("deriveSignals", () => {

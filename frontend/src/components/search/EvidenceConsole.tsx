@@ -29,7 +29,7 @@ const SIGNAL_ICON: Record<Signal["type"], string> = {
   "recurring-limitation": "↻",
   "methodological-monoculture": "◈",
   "population-narrowness": "○",
-  "forward-direction": "→",
+  "forward-direction": "✦",
 };
 
 function ConsensusMeter({ evidence }: { evidence: EvidenceDoc[] }) {

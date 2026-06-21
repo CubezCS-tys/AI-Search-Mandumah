@@ -136,27 +136,6 @@ export const healthFixture = {
 
 export const statsFixture = { chunks: 184523, documents: 12048 };
 
-export const overviewFixture = {
-  collection: "academic_articles_v2",
-  documents: 12048,
-  chunks: 184523,
-  avg_chunks_per_doc: 15.3,
-  avg_char_len: 612,
-  char_len_histogram: [
-    { label: "0-200", count: 1840 },
-    { label: "200-400", count: 4210 },
-    { label: "400-600", count: 5120 },
-    { label: "600-800", count: 3380 },
-    { label: "800+", count: 1973 },
-  ],
-  top_journals: [
-    { value: "المجلة العربية للتربية", count: 1820 },
-    { value: "مجلة تقنيات التعليم", count: 1530 },
-    { value: "مجلة الدراسات النفسية", count: 1240 },
-  ],
-  top_sections: SECTIONS.map((value, i) => ({ value, count: 2600 - i * 280 })),
-};
-
 function gauss(seed: number): number {
   // deterministic pseudo-noise (no Math.random, so fixtures are stable)
   const x = Math.sin(seed * 12.9898) * 43758.5453;
