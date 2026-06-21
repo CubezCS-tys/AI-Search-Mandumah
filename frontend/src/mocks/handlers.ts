@@ -3,7 +3,6 @@ import {
   searchFixture,
   healthFixture,
   statsFixture,
-  overviewFixture,
   projectionFixture,
   similarFixture,
 } from "./fixtures";

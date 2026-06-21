@@ -1,25 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 // Central theme hook (PLAN-00b B5). Dark mode is a `.dark` class on <html>
-// (applied pre-paint by the layout script from localStorage.theme), so there is
-// no central programmatic toggle today. This gives features + the visual tests
-// one place to read/flip it. Numbers stay dir="ltr" + tabular-nums elsewhere.
+// (applied pre-paint by the layout script from localStorage.theme). Read it via
+// useSyncExternalStore so it is SSR-safe and stays in sync across all consumers
+// (setTheme dispatches a "themechange" event); avoids a setState-in-effect.
 export type Theme = "light" | "dark";
 
-function currentTheme(): Theme {
-  if (typeof document === "undefined") return "light";
+const THEME_EVENT = "themechange";
+
+function readTheme(): Theme {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
-export function useTheme(): { theme: Theme; setTheme: (t: Theme) => void; toggle: () => void } {
-  const [theme, setThemeState] = useState<Theme>("light");
+function subscribe(onChange: () => void): () => void {
+  window.addEventListener(THEME_EVENT, onChange);
+  return () => window.removeEventListener(THEME_EVENT, onChange);
+}
 
-  // Sync to the actual class after hydration (avoids an SSR/CSR mismatch).
-  useEffect(() => {
-    setThemeState(currentTheme());
-  }, []);
+export function useTheme(): { theme: Theme; setTheme: (t: Theme) => void; toggle: () => void } {
+  const theme = useSyncExternalStore(subscribe, readTheme, (): Theme => "light");
 
   const setTheme = useCallback((t: Theme) => {
     document.documentElement.classList.toggle("dark", t === "dark");
@@ -28,11 +29,11 @@ export function useTheme(): { theme: Theme; setTheme: (t: Theme) => void; toggle
     } catch {
       // ignore storage failures (private mode / disabled)
     }
-    setThemeState(t);
+    window.dispatchEvent(new Event(THEME_EVENT));
   }, []);
 
   const toggle = useCallback(() => {
-    setTheme(currentTheme() === "dark" ? "light" : "dark");
+    setTheme(readTheme() === "dark" ? "light" : "dark");
   }, [setTheme]);
 
   return { theme, setTheme, toggle };
