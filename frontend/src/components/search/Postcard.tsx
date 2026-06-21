@@ -1,6 +1,7 @@
 "use client";
 
 import type { SearchResultItem } from "@/types/search";
+import { displayTitle } from "@/lib/text/display";
 
 // A shareable "corpus postcard" (PLAN-05). Pure presentational card rendered from
 // a search hit; the PNG export (html-to-image with embedded Arabic fonts) wraps
@@ -46,6 +47,7 @@ export function Postcard({
   variant?: PostcardVariant;
 }) {
   const c = VARIANT[variant];
+  const title = displayTitle(item);
   const authors = authorLine(item);
   const year = item.year ? item.year + "هـ" : null;
   const journal = item.journal ?? null;
@@ -86,8 +88,11 @@ export function Postcard({
           margin: 0,
         }}
       >
-        {item.title}
+        {title.text}
       </h3>
+      {!title.isReal && (
+        <div style={{ fontSize: 10, color: c.sub, marginTop: 4 }}>ترويسة المقطع (لا عنوان مفهرس)</div>
+      )}
 
       {/* meta: degrades gracefully */}
       <div style={{ marginTop: 10, fontSize: 12.5, color: c.sub, lineHeight: 1.9 }}>
