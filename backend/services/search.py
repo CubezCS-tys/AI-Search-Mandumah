@@ -56,6 +56,12 @@ class SearchResult:
     raw_score: float = 0.0
     lexical_score: float = 0.0
     title_score: float = 0.0
+    # MARC bibliographic fields (only populated for docs ingested with --marc-db;
+    # null on a corpus without the sidecar). authors/keywords are JSON lists.
+    authors: list[str] | None = None
+    year: str | None = None
+    journal: str | None = None
+    keywords: list[str] | None = None
 
 
 class Searcher:
@@ -446,6 +452,10 @@ class Searcher:
             journal_id=p.get("journal_id", ""),
             char_len=p.get("char_len", 0),
             raw_score=raw_score,
+            authors=p.get("authors") or None,
+            year=(str(p["year"]) if p.get("year") not in (None, "") else None),
+            journal=p.get("journal") or None,
+            keywords=p.get("keywords") or None,
         )
 
 

@@ -133,6 +133,8 @@ _RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 _RATE_LIMITED_PREFIXES = (
     "/api/search",
     "/api/chat",
+    "/api/insights",  # public lab routes (GET projection, POST similar)
+    "/api/analyze",  # already-public paid GET; previously unthrottled
     "/mcp",
     "/api/admin/login",  # throttle credential brute-force on the open port
 )
@@ -193,16 +195,19 @@ async def _abuse_guard(request: Request, call_next):
                     {"detail": "Invalid Content-Length"}, status_code=400
                 )
 
-        # Rate limit the LLM-backed routes.
-        if _RATE_LIMIT_PER_MINUTE > 0 and request.url.path.startswith(
-            _RATE_LIMITED_PREFIXES
-        ):
-            if not _rate_limit_ok(_client_key(request)):
-                return JSONResponse(
-                    {"detail": "تم تجاوز الحد المسموح من الطلبات. حاول بعد قليل."},
-                    status_code=429,
-                    headers={"Retry-After": "60"},
-                )
+    # Rate limit the LLM-backed + public lab routes on GET and POST alike (the
+    # public insight/analyze GETs must be throttled too, not only POSTs).
+    if (
+        _RATE_LIMIT_PER_MINUTE > 0
+        and request.method in ("GET", "POST")
+        and request.url.path.startswith(_RATE_LIMITED_PREFIXES)
+    ):
+        if not _rate_limit_ok(_client_key(request)):
+            return JSONResponse(
+                {"detail": "تم تجاوز الحد المسموح من الطلبات. حاول بعد قليل."},
+                status_code=429,
+                headers={"Retry-After": "60"},
+            )
 
     return await call_next(request)
 
@@ -231,6 +236,16 @@ class SearchResultItem(BaseModel):
     chunk_index: int
     journal_id: str
     char_len: int
+    # Score breakdown (PLAN B1): already computed in the reranker. Defaults keep
+    # SynthesisRequest's inbound SearchResultItem payload backward-compatible.
+    raw_score: float = 0.0
+    lexical_score: float = 0.0
+    title_score: float = 0.0
+    # MARC bibliographic fields (PLAN B2): plural lists; null until the backfill.
+    authors: list[str] | None = None
+    year: str | None = None
+    journal: str | None = None
+    keywords: list[str] | None = None
 
 
 class SearchResponse(BaseModel):
@@ -352,6 +367,13 @@ async def search(req: SearchRequest):
                 chunk_index=r.chunk_index,
                 journal_id=r.journal_id,
                 char_len=r.char_len,
+                raw_score=r.raw_score,
+                lexical_score=r.lexical_score,
+                title_score=r.title_score,
+                authors=getattr(r, "authors", None),
+                year=getattr(r, "year", None),
+                journal=getattr(r, "journal", None),
+                keywords=getattr(r, "keywords", None),
             )
             for r in results
         ],
@@ -909,8 +931,10 @@ async def delete_conversation_route(conversation_id: str):
 # ── Admin / Vector-Inspector console ──────────────────────────────────────
 # Read-only admin API under /api/admin/* (own username/password auth).
 from backend.routers.admin import router as _admin_router
+from backend.routers.insights import router as _insights_router
 
 app.include_router(_admin_router)
+app.include_router(_insights_router)  # public read-only insight surface (PLAN B3)
 
 
 # ── MCP server mount ──────────────────────────────────────────────────────
