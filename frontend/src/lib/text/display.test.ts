@@ -6,6 +6,11 @@ describe("looksLikeMetadata (real VPS title cases)", () => {
     expect(looksLikeMetadata("أ. فاطمة عبد الواحد معرفي")).toBe(true);
     expect(looksLikeMetadata("أ .نوال عائض آل مشافي جامعة الملك خالد - السعودية")).toBe(true);
     expect(looksLikeMetadata("المجلد 8 العدد 4/ ديسمبر 2024/ ص ص 186 - 206 DOI : 10.58205/fber")).toBe(true);
+    // Journal/org names used as titles (seen live in the v2 corpus).
+    expect(looksLikeMetadata("Arab Journal for Humanities and Social Sciences")).toBe(true);
+    expect(looksLikeMetadata("MANSOURA UNIVERSITY")).toBe(true);
+    expect(looksLikeMetadata("الجمعية المصرية لتكنولوجيا التعليم")).toBe(true);
+    expect(looksLikeMetadata("المجلة العربية للتربية")).toBe(true);
     expect(looksLikeMetadata("")).toBe(true);
     expect(looksLikeMetadata(null)).toBe(true);
   });

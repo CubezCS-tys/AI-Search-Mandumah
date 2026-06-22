@@ -6,9 +6,12 @@
 // helpers let features degrade honestly instead of presenting metadata as a title
 // or color-coding a rainbow of section strings.
 
-// A "title" that is really author/affiliation/journal metadata, not a title.
-// NB: \b only works around ASCII word chars, so no \b after Arabic tokens.
-const META_TITLE_RE = /(^أ\s*\.|^د\s*\.|^المجلد|\bDOI\b|ص\s*ص\s*\d|^https?:\/\/|^\d{4}-\d{3}-)/i;
+// A "title" that is really author/affiliation/journal/org metadata, not a title.
+// Patterns confirmed against the live v2 corpus (where `title` is the chunk's
+// first OCR heading). NB: \b only works around ASCII word chars, so no \b after
+// Arabic tokens - anchor those with ^ + a trailing space instead.
+const META_TITLE_RE =
+  /(^أ\s*\.|^د\s*\.|^المجلد|^المجلة\s|^مجلة\s|^الجمعية\s|^جامعة\s|\bDOI\b|\bJournal\b|\bUniversity\b|ص\s*ص\s*\d|^https?:\/\/|^\d{4}-\d{3}-)/i;
 
 export function looksLikeMetadata(title: string | null | undefined): boolean {
   const t = (title ?? "").trim();
