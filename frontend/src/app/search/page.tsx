@@ -15,6 +15,8 @@ import ReferenceCarousel from "@/components/search/ReferenceCarousel";
 import DocumentPreview from "@/components/search/DocumentPreview";
 import { ScoreReactor } from "@/components/search/ScoreReactor";
 import { PostcardGallery } from "@/components/search/PostcardGallery";
+import { ViewSwitcher, type SearchView } from "@/components/search/ViewSwitcher";
+import { buildSearchUrl } from "@/lib/search/searchUrl";
 import { useSearch } from "@/lib/hooks/useSearch";
 import type { SearchMode, SearchResponse, SearchResultItem, SynthesisMode } from "@/types/search";
 
@@ -177,15 +179,20 @@ function SearchPageContent() {
       setHydeEnabled(nextHyde);
       setSynthesisActive(false);
 
-      // Update URL without full reload
-      const params = new URLSearchParams({ q: newQuery, mode: newMode, synth: synthesisMode });
-      if (nextHyde) params.set("hyde", "1");
-      if (filters.journalId) params.set("journal", filters.journalId);
-      if (filters.section) params.set("section", filters.section);
-      if (filters.docId) params.set("doc", filters.docId);
-      if (labMode) params.set("lab", "1");
-      if (cardsMode) params.set("cards", "1");
-      router.replace(`/search?${params.toString()}`, { scroll: false });
+      router.replace(
+        buildSearchUrl({
+          q: newQuery,
+          mode: newMode,
+          synth: synthesisMode,
+          hyde: nextHyde,
+          journalId: filters.journalId,
+          section: filters.section,
+          docId: filters.docId,
+          lab: labMode,
+          cards: cardsMode,
+        }),
+        { scroll: false },
+      );
     },
     [router, filters, synthesisMode, labMode, cardsMode]
   );
@@ -195,15 +202,20 @@ function SearchPageContent() {
       setFilters(newFilters);
       setSynthesisActive(false);
 
-      // Update URL
-      const params = new URLSearchParams({ q: query, mode, synth: synthesisMode });
-      if (hydeEnabled) params.set("hyde", "1");
-      if (newFilters.journalId) params.set("journal", newFilters.journalId);
-      if (newFilters.section) params.set("section", newFilters.section);
-      if (newFilters.docId) params.set("doc", newFilters.docId);
-      if (labMode) params.set("lab", "1");
-      if (cardsMode) params.set("cards", "1");
-      router.replace(`/search?${params.toString()}`, { scroll: false });
+      router.replace(
+        buildSearchUrl({
+          q: query,
+          mode,
+          synth: synthesisMode,
+          hyde: hydeEnabled,
+          journalId: newFilters.journalId,
+          section: newFilters.section,
+          docId: newFilters.docId,
+          lab: labMode,
+          cards: cardsMode,
+        }),
+        { scroll: false },
+      );
     },
     [router, query, mode, synthesisMode, hydeEnabled, labMode, cardsMode]
   );
@@ -213,16 +225,45 @@ function SearchPageContent() {
       setSynthesisMode(nextMode);
       setSynthesisActive(false);
 
-      const params = new URLSearchParams({ q: query, mode, synth: nextMode });
-      if (hydeEnabled) params.set("hyde", "1");
-      if (filters.journalId) params.set("journal", filters.journalId);
-      if (filters.section) params.set("section", filters.section);
-      if (filters.docId) params.set("doc", filters.docId);
-      if (labMode) params.set("lab", "1");
-      if (cardsMode) params.set("cards", "1");
-      router.replace(`/search?${params.toString()}`, { scroll: false });
+      router.replace(
+        buildSearchUrl({
+          q: query,
+          mode,
+          synth: nextMode,
+          hyde: hydeEnabled,
+          journalId: filters.journalId,
+          section: filters.section,
+          docId: filters.docId,
+          lab: labMode,
+          cards: cardsMode,
+        }),
+        { scroll: false },
+      );
     },
     [router, query, mode, filters, hydeEnabled, labMode, cardsMode],
+  );
+
+  // Switch the results view (normal / Score Reactor / Postcards). Mutually
+  // exclusive by construction; also clears the synthesis two-column layout.
+  const handleViewChange = useCallback(
+    (view: SearchView) => {
+      setSynthesisActive(false);
+      router.replace(
+        buildSearchUrl({
+          q: query,
+          mode,
+          synth: synthesisMode,
+          hyde: hydeEnabled,
+          journalId: filters.journalId,
+          section: filters.section,
+          docId: filters.docId,
+          lab: view === "lab",
+          cards: view === "cards",
+        }),
+        { scroll: false },
+      );
+    },
+    [router, query, mode, synthesisMode, hydeEnabled, filters],
   );
 
   return (
@@ -246,8 +287,8 @@ function SearchPageContent() {
       {/* Results */}
       <main className={`mx-auto px-5 py-5 ${synthesisActive ? "max-w-[1280px]" : "max-w-3xl"}`}>
         {/* Filters + meta row */}
-        <div className="mb-5 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <SearchFilters
               journalId={filters.journalId}
               section={filters.section}
@@ -259,6 +300,12 @@ function SearchPageContent() {
                 total={data.total}
                 searchMs={data.search_ms}
                 mode={data.mode}
+              />
+            )}
+            {data && !isLoading && (data.results.length > 0 || labMode || cardsMode) && (
+              <ViewSwitcher
+                current={labMode ? "lab" : cardsMode ? "cards" : "normal"}
+                onChange={handleViewChange}
               />
             )}
           </div>

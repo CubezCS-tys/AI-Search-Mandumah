@@ -13,7 +13,8 @@ test.beforeEach(async ({ page }, testInfo) => {
 
 test("score reactor lab mode visual baseline", async ({ page }) => {
   await page.goto("/search?q=" + encodeURIComponent("التعلم المقلوب") + "&lab=1");
-  await expect(page.getByText("مفاعل الترتيب")).toBeVisible();
+  // target the ScoreReactor heading (font-heading), not the switcher pill of the same text
+  await expect(page.locator(".font-heading", { hasText: "مفاعل الترتيب" })).toBeVisible();
   await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
   await page.evaluate(() => document.fonts.ready);
   await expect(page).toHaveScreenshot("score-reactor.png", { fullPage: true });
