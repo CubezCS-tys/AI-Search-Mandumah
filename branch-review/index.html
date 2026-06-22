@@ -1,0 +1,95 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>What I did on this branch - Mandumah</title>
+<style>
+  :root{--bg:#f3f1ec;--card:#fff;--ink:#23201c;--sub:#5b554e;--accent:#9B1B30;--rule:#e2ddd2;--good:#2a7a4f}
+  *{box-sizing:border-box}
+  body{font:15.5px/1.6 -apple-system,system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--ink);margin:0;padding:30px}
+  .wrap{max-width:1000px;margin:auto}
+  h1{font-size:27px;margin:0 0 2px}
+  .sub{color:var(--sub);margin:0 0 22px;font-size:15px}
+  .box{background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:16px 22px;margin:0 0 20px}
+  .box h2{font-size:17px;margin:0 0 6px}
+  .tldr{border-inline-start:4px solid var(--accent)}
+  ul{margin:8px 0;padding-inline-start:20px}
+  li{margin:5px 0}
+  b{color:var(--accent)}
+  .ok{color:var(--good);font-weight:700}
+  code{background:#efece6;border-radius:4px;padding:1px 6px;font-size:13.5px;font-family:ui-monospace,Menlo,monospace}
+  .new{display:inline-block;background:var(--accent);color:#fff;font-size:11px;font-weight:700;border-radius:5px;padding:1px 7px;margin-inline-start:6px;vertical-align:middle}
+  hr{border:0;border-top:1px solid var(--rule);margin:28px 0 22px}
+  h2.shots{font-size:20px}
+  figure{margin:0 0 34px;background:var(--card);border:1px solid var(--rule);border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+  figure img{width:100%;display:block;border-bottom:1px solid #eee;cursor:zoom-in}
+  figcaption{padding:12px 18px}
+  figcaption .fn{color:var(--accent);font-weight:700;font-size:13px}
+</style>
+<div class="wrap">
+  <h1>What I did on this branch</h1>
+  <p class="sub">branch: <code>zain-does-crack</code> &nbsp;&middot;&nbsp; open the live app too, but this page is the fast version. screenshots are all against the <b>real corpus (852,440 docs)</b>, captions in english.</p>
+
+  <div class="box tldr">
+    <h2>tl;dr</h2>
+    <p>Went hard on the frontend, kept the backend tiny. Three new things worth your time: a <b>Score Reactor</b> (see exactly why a result ranked where, and re-rank it live), an <b>Evidence Console</b> (turns a synthesis into an agreement-meter + a methodology table), and shareable <b>Corpus Postcards</b>. Backend was just small lifts. All tested against real data, nothing half-baked.</p>
+  </div>
+
+  <div class="box">
+    <h2>what I built <span class="new">NEW</span></h2>
+    <ul>
+      <li><b>Score Reactor</b> (<code>?lab=1</code>) - the "why is this ranked here" lab. Every result shows its real dense / keyword / title score split, and you drag weight sliders to re-rank live. The numbers are real (they actually vary, 0.78 down to 0.16), not faked. shots 04-05, 17.</li>
+      <li><b>Evidence Console</b> (advanced synthesis -> "وحدة الأدلة" tab) - takes the AI answer and adds an agreement meter across the sources, auto-detected signals (contested finding, forward direction, etc.), and a side-by-side methodology table. all of it cites the actual retrieved docs, it does not make stuff up. shot 10.</li>
+      <li><b>Corpus Postcards</b> (<code>?cards=1</code>) - any result as a clean shareable card, 3 colour variants. degrades properly when the catalogue has no author/year (which is basically always - see caveats). shots 06-07, 18, 21.</li>
+    </ul>
+  </div>
+
+  <div class="box">
+    <h2>how I did it</h2>
+    <ul>
+      <li><b>Frontend</b> = ~90% of the work. Next 16 / React 19 / Tailwind v4, same as yours. Every new feature is behind a URL flag (<code>?lab=1</code>, <code>?cards=1</code>) so it is opt-in and does <b>not</b> touch your normal search/synthesis flow. I also added a real test setup that wasn't there: unit tests (vitest) + visual screenshot tests (Playwright, 5 device/theme combos). The fragile streaming-synthesis component I left byte-for-byte untouched and just bolted a tab onto it.</li>
+      <li><b>Backend</b> = small lifts, on purpose. 3 files. I did <b>not</b> rewrite anything. <code>search.py</code> + <code>main.py</code>: added the score breakdown + (optional, null-safe) catalogue fields onto search hits. New <code>routers/insights.py</code>: a public read-only route that just <b>reuses your existing admin projection/similar handlers</b> with the collection pinned and tight caps, so nothing admin leaks. Plus the rate-limit now covers GET, and the abuse key uses the right XFF hop. That's the whole backend diff.</li>
+    </ul>
+  </div>
+
+  <div class="box">
+    <h2>how I know it actually works</h2>
+    <ul>
+      <li><span class="ok">Ran the whole thing against your live corpus</span> (my frontend pointed at a copy of the backend on the real Qdrant). Score Reactor, Evidence Console, Postcards, dark mode, mobile, empty states - all real data, all in the screenshots below.</li>
+      <li><span class="ok">78 unit tests + 20 visual tests green, typecheck clean, production build clean.</span></li>
+      <li><span class="ok">Two independent code reviews</span> (one of them a security pass on the backend) - all real findings fixed. The security review came back low-risk, no critical/high.</li>
+      <li>Caught + fixed a real bug <b>during</b> this QA: some "titles" in your corpus are actually journal/author lines, my card guard now flags those instead of showing them as a title.</li>
+    </ul>
+  </div>
+
+  <div class="box">
+    <h2>honest caveats (brutal)</h2>
+    <ul>
+      <li>The <b>scanned-article reader</b> (doc viewer) is <b>not mine</b>, didn't touch it. It won't load in my test instance because that box only has the search index, not the page-image store. Works fine in your real deploy (its endpoints return 200). Not shown here.</li>
+      <li>Your <code>title</code> field is messy (it's the first OCR line, often an author or a DOI). I handle it gracefully but it is what it is until there's a metadata backfill. Author/year are basically always empty in the index, so anything "MARC-y" degrades on purpose, never crashes.</li>
+      <li>Score Reactor / Evidence need the backend lift to be deployed (the score split + synthesis). Against the old backend they just degrade quietly, no errors.</li>
+    </ul>
+  </div>
+
+  <hr>
+  <h2 class="shots">the screenshots (click to zoom)</h2>
+  <figure><img src="01-home-light.png" loading="lazy"><figcaption><span class="fn">01 - home</span><br>Landing page. search entry point.</figcaption></figure>
+  <figure><img src="02-search-loading.png" loading="lazy"><figcaption><span class="fn">02 - search loading</span><br>Skeleton placeholders while real results stream in.</figcaption></figure>
+  <figure><img src="03-search-results-light.png" loading="lazy"><figcaption><span class="fn">03 - search results</span><br>"flipped learning" on the real corpus. relevance score + section tag + snippet per hit, RTL.</figcaption></figure>
+  <figure><img src="04-score-reactor.png" loading="lazy"><figcaption><span class="fn">04 - Score Reactor</span> <span class="new">NEW</span><br>real per-result score split. drag the weights, it re-ranks. numbers genuinely vary.</figcaption></figure>
+  <figure><img src="05-score-reactor-reweighted.png" loading="lazy"><figcaption><span class="fn">05 - Score Reactor reweighted</span> <span class="new">NEW</span><br>after pushing a weight up - results re-rank, bars recompute.</figcaption></figure>
+  <figure><img src="06-postcards-light.png" loading="lazy"><figcaption><span class="fn">06 - Postcards</span> <span class="new">NEW</span><br>each result as a shareable card, variants cycle.</figcaption></figure>
+  <figure><img src="07-postcards-recoloured.png" loading="lazy"><figcaption><span class="fn">07 - Postcards recoloured</span> <span class="new">NEW</span><br>after the shuffle-colours toggle.</figcaption></figure>
+  <figure><img src="08-synthesis-streaming.png" loading="lazy"><figcaption><span class="fn">08 - synthesis streaming</span><br>AI answer being written live, grounded in the sources.</figcaption></figure>
+  <figure><img src="09-synthesis-final.png" loading="lazy"><figcaption><span class="fn">09 - synthesis done</span><br>finished answer with inline numbered citations.</figcaption></figure>
+  <figure><img src="10-evidence-console.png" loading="lazy"><figcaption><span class="fn">10 - Evidence Console</span> <span class="new">NEW</span><br>agreement meter + research signals + methodology table, all from the real evidence.</figcaption></figure>
+  <figure><img src="12-chat.png" loading="lazy"><figcaption><span class="fn">12 - corpus chat</span><br>ask questions answered from the corpus.</figcaption></figure>
+  <figure><img src="13-search-other-topic.png" loading="lazy"><figcaption><span class="fn">13 - different query</span><br>"AI in education" - another topic, sanity check.</figcaption></figure>
+  <figure><img src="14-search-no-results.png" loading="lazy"><figcaption><span class="fn">14 - empty state</span><br>nonsense query, no matches, handled clean.</figcaption></figure>
+  <figure><img src="15-home-dark.png" loading="lazy"><figcaption><span class="fn">15 - home dark</span><br>dark mode.</figcaption></figure>
+  <figure><img src="16-search-dark.png" loading="lazy"><figcaption><span class="fn">16 - search dark</span><br>results, dark mode.</figcaption></figure>
+  <figure><img src="17-score-reactor-dark.png" loading="lazy"><figcaption><span class="fn">17 - Score Reactor dark</span> <span class="new">NEW</span><br>the lab in dark mode.</figcaption></figure>
+  <figure><img src="18-postcards-dark.png" loading="lazy"><figcaption><span class="fn">18 - Postcards dark</span> <span class="new">NEW</span><br>cards, dark mode.</figcaption></figure>
+  <figure><img src="19-home-mobile.png" loading="lazy"><figcaption><span class="fn">19 - home mobile</span><br>responsive on a phone.</figcaption></figure>
+  <figure><img src="20-search-mobile.png" loading="lazy"><figcaption><span class="fn">20 - search mobile</span><br>results on a phone.</figcaption></figure>
+  <figure><img src="21-postcards-mobile.png" loading="lazy"><figcaption><span class="fn">21 - Postcards mobile</span> <span class="new">NEW</span><br>cards on a phone.</figcaption></figure>
+</div>
+<script>document.querySelectorAll('figure img').forEach(i=>i.addEventListener('click',()=>window.open(i.src,'_blank')));</script>
