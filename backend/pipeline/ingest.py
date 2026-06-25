@@ -230,15 +230,47 @@ def _iter_shard_docs(shards: list[Path], processed_ids: set[str], progress: dict
 
 
 def _load_checkpoint(checkpoint_path: Path) -> dict:
-    if checkpoint_path.exists():
+    empty = {"processed": [], "failed": [], "stats": {}}
+    if not checkpoint_path.exists():
+        return empty
+    try:
         with open(checkpoint_path) as f:
-            return json.load(f)
-    return {"processed": [], "failed": [], "stats": {}}
+            data = json.load(f)
+        data.setdefault("processed", [])
+        data.setdefault("failed", [])
+        data.setdefault("stats", {})
+        return data
+    except (json.JSONDecodeError, OSError) as e:
+        # A corrupt checkpoint (e.g. truncated by an interrupted write) must not
+        # crash the run. Preserve it for inspection and start fresh — but warn
+        # loudly, since starting empty means already-embedded docs get reprocessed
+        # unless the checkpoint is first rebuilt from Qdrant.
+        bad = checkpoint_path.with_suffix(
+            checkpoint_path.suffix + f".corrupt-{int(time.time())}"
+        )
+        try:
+            checkpoint_path.rename(bad)
+        except OSError:
+            bad = None
+        logger.error(
+            "Checkpoint %s is corrupt (%s); preserved as %s. Starting from an "
+            "EMPTY checkpoint — already-embedded docs will be re-processed unless "
+            "you rebuild the checkpoint from Qdrant first.",
+            checkpoint_path, e, bad,
+        )
+        return empty
 
 
 def _save_checkpoint(checkpoint_path: Path, checkpoint: dict):
-    with open(checkpoint_path, "w") as f:
+    # Atomic write: dump to a temp file in the same directory, fsync, then
+    # os.replace() into place. A rename is atomic on POSIX, so an interrupted
+    # write (e.g. a signal mid-dump) can never leave a truncated checkpoint.
+    tmp = checkpoint_path.with_suffix(checkpoint_path.suffix + ".tmp")
+    with open(tmp, "w") as f:
         json.dump(checkpoint, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, checkpoint_path)
 
 
 def _load_para_hashes(path: Path) -> set[str]:
@@ -921,19 +953,23 @@ def ingest_documents(
     para_hashes_lock = threading.Lock()
     checkpoint_lock = threading.Lock()
 
-    # Graceful shutdown handler
+    # Graceful shutdown handler. IMPORTANT: keep this minimal — do NOT acquire
+    # checkpoint_lock or write files here. The handler runs on the main thread
+    # and can fire while the main thread (or a worker) already holds
+    # checkpoint_lock mid-dump; re-acquiring a non-reentrant lock self-deadlocks
+    # and leaves a truncated checkpoint. So we only request cancellation here.
+    # The workers drain, the threads are joined, and the normal post-join code
+    # path writes the final checkpoint atomically.
+    shutting_down = threading.Event()
+
     def _signal_handler(signum, frame):
+        if shutting_down.is_set():
+            # Second signal: operator is impatient / shutdown is wedged. Bail hard.
+            logger.warning("Received signal %d again — forcing immediate exit.", signum)
+            os._exit(1)
+        shutting_down.set()
         logger.warning("Received signal %d — initiating graceful shutdown...", signum)
         cancel.set()
-        # Emergency checkpoint
-        try:
-            with checkpoint_lock:
-                _save_checkpoint(checkpoint_path, checkpoint)
-            _save_para_hashes(para_hash_path, para_hashes)
-            _save_file_hashes(file_hash_path, file_hashes)
-            logger.info("Emergency checkpoint saved!")
-        except Exception as e:
-            logger.error("Failed to save emergency checkpoint: %s", e)
 
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
