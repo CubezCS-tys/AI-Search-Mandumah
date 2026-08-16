@@ -70,7 +70,7 @@ COLLECTION_CONFIG = {
     "on_disk": True,         # Store original vectors on disk
     "hnsw_m": 16,
     "hnsw_ef_construct": 256,
-    "quantization": "scalar", # INT8 scalar quantization
+    "quantization": "binary", # BINARY quant, always_ram — matches live mandumah_v2
 }
 
 CHECKPOINT_FILE = "ingest_checkpoint.json"
@@ -224,6 +224,69 @@ def _iter_shard_docs(shards: list[Path], processed_ids: set[str], progress: dict
         except Exception as e:
             logger.error("Failed to read shard %s: %s", shard, e, exc_info=True)
             progress["failed"].append(shard.name)
+
+
+# ── S3 streaming source (embed straight from S3, no staging phase) ─────────
+
+
+def _list_s3_todo(bucket: str, prefix: str, region, processed_ids: set, exclude_ids: set):
+    """List doc_ids under the bucket minus already-processed and excluded ones.
+
+    Returns (s3_client, todo_list). The client is reused by _iter_s3_docs so we
+    don't pay a second listing pass.
+    """
+    from backend.pipeline.stage_ocr_from_s3 import _s3_client, _iter_doc_ids
+
+    s3 = _s3_client(region)
+    todo = [
+        d for d in _iter_doc_ids(s3, bucket, prefix)
+        if d not in processed_ids and d not in exclude_ids
+    ]
+    return s3, todo
+
+
+def _iter_s3_docs(s3, bucket: str, prefix: str, todo: list, progress: dict,
+                  marc_lookup=None, min_conf: float = 0.6, min_len: int = 20,
+                  workers: int = 16):
+    """Stream OCR docs straight from S3, yielding pipeline records.
+
+    Downloads each <doc_id>.json with a bounded look-ahead pool so S3 I/O
+    overlaps embedding without unbounded memory, extracts the Azure DI `content`
+    field, applies the confidence/length filter, and yields the same
+    (doc_id, content, meta, None) tuple the chunker consumes.
+    """
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
+    from backend.pipeline.stage_ocr_from_s3 import _fetch_one
+
+    window = max(2 * workers, 8)
+    it = iter(todo)
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="s3dl") as pool:
+        inflight = deque()
+        for _ in range(window):
+            try:
+                inflight.append(pool.submit(_fetch_one, s3, bucket, prefix, next(it)))
+            except StopIteration:
+                break
+        while inflight:
+            r = inflight.popleft().result()
+            try:
+                inflight.append(pool.submit(_fetch_one, s3, bucket, prefix, next(it)))
+            except StopIteration:
+                pass
+            st = r["status"]
+            if st != "ok":
+                if st == "error":
+                    logger.error("S3 fetch failed %s: %s", r["doc_id"], r.get("error"))
+                    progress["failed"].append(r["doc_id"])
+                continue
+            if r["content_len"] < min_len or r["mean_conf"] < min_conf:
+                continue
+            doc_id = r["doc_id"]
+            meta = _extract_metadata_from_id(doc_id)
+            meta["source"] = "ocr_s3"
+            _merge_marc(meta, doc_id, marc_lookup, progress)
+            yield doc_id, r["content"], meta, None
 
 
 # ── Checkpoint & state ───────────────────────────────────────────────────
@@ -437,12 +500,11 @@ def create_collection(client, collection_name: str, force_recreate: bool = False
             ),
         },
         hnsw_config=models.HnswConfigDiff(on_disk=True),
-        quantization_config=models.ScalarQuantization(
-            scalar=models.ScalarQuantizationConfig(
-                type=models.ScalarType.INT8,
-                quantile=0.99,
-                always_ram=False,
-            ),
+        # Binary quant kept always in RAM — matches the live mandumah_v2 config
+        # (the fast, corruption-free rebuild). Existing collections short-circuit
+        # above, so this only shapes brand-new collections.
+        quantization_config=models.BinaryQuantization(
+            binary=models.BinaryQuantizationConfig(always_ram=True),
         ),
     )
 
@@ -815,6 +877,12 @@ def ingest_documents(
     normalize_arabic: bool = True,
     input_jsonl: str | None = None,
     marc_db: str | None = None,
+    input_s3: str | None = None,
+    s3_region: str | None = None,
+    s3_exclude: list | None = None,
+    s3_min_conf: float = 0.6,
+    s3_workers: int = 16,
+    work_dir: str | None = None,
 ):
     """
     Main ingestion pipeline with async OpenAI embeddings.
@@ -845,10 +913,15 @@ def ingest_documents(
     """
     from backend.pipeline.embedder import OpenAIEmbedder
 
-    if bool(input_dir) == bool(input_jsonl):
-        raise ValueError("Provide exactly one of input_dir or input_jsonl")
+    if sum(bool(x) for x in (input_dir, input_jsonl, input_s3)) != 1:
+        raise ValueError("Provide exactly one of input_dir / input_jsonl / input_s3")
 
-    input_path = Path(input_dir or input_jsonl)
+    # S3 mode has no local input dir — checkpoint/manifest live in a work dir.
+    if input_s3:
+        input_path = Path(work_dir or "ocr_ingest_state")
+        input_path.mkdir(parents=True, exist_ok=True)
+    else:
+        input_path = Path(input_dir or input_jsonl)
     checkpoint_path = input_path / CHECKPOINT_FILE
     para_hash_path = input_path / PARA_HASH_FILE
     file_hash_path = input_path / FILE_HASH_FILE
@@ -885,7 +958,28 @@ def ingest_documents(
 
     # Build the document record source
     total_docs: int | None = None
-    if input_jsonl:
+    if input_s3:
+        exclude_ids: set = set()
+        for ck in (s3_exclude or []):
+            ids = json.loads(Path(ck).read_text()).get("processed", [])
+            exclude_ids.update(ids)
+            logger.info("S3 exclude: +%d doc_ids from %s", len(ids), ck)
+        raw = input_s3[len("s3://"):] if input_s3.startswith("s3://") else input_s3
+        bucket, _, prefix = raw.partition("/")
+        logger.info("Listing S3 doc_ids under s3://%s/%s (excluding %d) ...",
+                    bucket, prefix, len(exclude_ids))
+        s3, todo = _list_s3_todo(bucket, prefix, s3_region, processed_ids, exclude_ids)
+        if limit > 0:
+            todo = todo[:limit]
+        logger.info("Already processed: %d, S3 docs to embed: %d, Paragraph hashes: %d",
+                    len(processed_ids), len(todo), len(para_hashes))
+        if not todo:
+            logger.info("Nothing to embed from S3.")
+            return
+        total_docs = len(todo)
+        records = _iter_s3_docs(s3, bucket, prefix, todo, progress, marc_lookup,
+                                min_conf=s3_min_conf, workers=s3_workers)
+    elif input_jsonl:
         shards = _find_shards(input_path)
         logger.info("Found %d content shards in %s", len(shards), input_jsonl)
         if not shards:
@@ -1147,6 +1241,13 @@ def main():
     src = parser.add_mutually_exclusive_group(required=True)
     src.add_argument("--input-dir", help="Path to output/ directory of per-article JSON files")
     src.add_argument("--input-jsonl", help="Path to directory of *.jsonl(.gz) content shards")
+    src.add_argument("--input-s3", help="Bucket (or s3://bucket/prefix) of <doc_id>/<doc_id>.json OCR files — stream + embed directly, no staging")
+    parser.add_argument("--s3-region", help="AWS region for --input-s3")
+    parser.add_argument("--s3-exclude-checkpoint", action="append", default=[],
+                        help="ingest_checkpoint.json whose 'processed' doc_ids to skip (repeatable)")
+    parser.add_argument("--s3-min-confidence", type=float, default=0.6, help="Drop docs below this mean OCR word confidence")
+    parser.add_argument("--s3-workers", type=int, default=16, help="Concurrent S3 downloads (look-ahead prefetch)")
+    parser.add_argument("--work-dir", help="State dir (checkpoint/manifest) for --input-s3 (default ocr_ingest_state)")
     parser.add_argument("--marc-db", help="Path to MARC metadata sidecar (scripts/extract_marc_metadata.py)")
     parser.add_argument("--collection", default="academic_articles_v2", help="Qdrant collection name")
     parser.add_argument("--qdrant-url", default="http://localhost:6333", help="Qdrant server URL")
@@ -1170,6 +1271,12 @@ def main():
     ingest_documents(
         input_dir=args.input_dir,
         input_jsonl=args.input_jsonl,
+        input_s3=args.input_s3,
+        s3_region=args.s3_region,
+        s3_exclude=args.s3_exclude_checkpoint,
+        s3_min_conf=args.s3_min_confidence,
+        s3_workers=args.s3_workers,
+        work_dir=args.work_dir,
         marc_db=args.marc_db,
         collection_name=args.collection,
         qdrant_url=args.qdrant_url,

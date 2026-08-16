@@ -244,9 +244,51 @@ class OpenAIEmbedder:
         )
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
+        # OpenAI text-embedding-3-* models cap input at 8192 tokens. Stay a hair
+        # under so we never trip a 400 on an oversized chunk (e.g. a very long
+        # Arabic abstract, where 1 char ≈ ~2 cl100k tokens).
+        self.max_input_tokens = int(os.getenv("EMBEDDING_MAX_TOKENS", "8000"))
+        # OpenAI caps a single embeddings request at 300k tokens total across all
+        # inputs. Keep a margin so a large --batch-size can never trip a fatal 400
+        # (which kills the embedder thread with no retry). Batches are split to
+        # respect BOTH this token budget and the --batch-size input count.
+        self.max_request_tokens = int(os.getenv("EMBEDDING_MAX_REQUEST_TOKENS", "250000"))
         self._sparse = SparseVectorizer()
         self._rate_limiter = AsyncRateLimiter(self.requests_per_minute)
         self._client = None
+        self._encoding = None
+
+    def _get_encoding(self):
+        """Lazily load the cl100k_base tokenizer used by text-embedding-3-*."""
+        if self._encoding is None:
+            import tiktoken
+
+            try:
+                self._encoding = tiktoken.encoding_for_model(self.model)
+            except KeyError:
+                self._encoding = tiktoken.get_encoding("cl100k_base")
+        return self._encoding
+
+    def _truncate(self, text: str) -> tuple[str, int]:
+        """Truncate a single text to max_input_tokens; return (text, token_count).
+
+        Also substitutes a single space for empty/whitespace input, which the
+        OpenAI API rejects with a 400. The token count is returned so the caller
+        can pack requests under the per-request token budget without re-encoding.
+        """
+        if not text or not text.strip():
+            return " ", 1
+        enc = self._get_encoding()
+        tokens = enc.encode(text)
+        if len(tokens) <= self.max_input_tokens:
+            return text, len(tokens)
+        truncated = enc.decode(tokens[: self.max_input_tokens])
+        logger.warning(
+            "Truncated oversized input for embedding: %d -> %d tokens",
+            len(tokens),
+            self.max_input_tokens,
+        )
+        return truncated, self.max_input_tokens
 
     def _get_async_client(self):
         if self._client is None:
@@ -305,13 +347,34 @@ class OpenAIEmbedder:
         text_list = list(texts)
         bs = batch_size or self.batch_size
 
+        # Token-truncate before sending so a single oversized chunk can never
+        # trigger an OpenAI 400 (which previously killed the embedder thread).
+        truncated = [self._truncate(t) for t in text_list]
+        api_texts = [t for t, _ in truncated]
+        tok_counts = [n for _, n in truncated]
+
         semaphore = asyncio.Semaphore(self.max_concurrent)
 
+        # Pack requests under BOTH the input-count cap (bs) and OpenAI's
+        # per-request token budget. Contiguous ordering is preserved, so the
+        # flattened results still line up with text_list.
+        batches: list[list[str]] = []
+        cur: list[str] = []
+        cur_tok = 0
+        for txt, ntok in zip(api_texts, tok_counts):
+            if cur and (len(cur) >= bs or cur_tok + ntok > self.max_request_tokens):
+                batches.append(cur)
+                cur, cur_tok = [], 0
+            cur.append(txt)
+            cur_tok += ntok
+        if cur:
+            batches.append(cur)
+
         # Fire all batches concurrently
-        tasks = []
-        for i in range(0, len(text_list), bs):
-            batch = text_list[i : i + bs]
-            tasks.append(self._embed_batch_async(batch, self._rate_limiter, semaphore))
+        tasks = [
+            self._embed_batch_async(batch, self._rate_limiter, semaphore)
+            for batch in batches
+        ]
 
         batch_results = await asyncio.gather(*tasks)
 
