@@ -87,3 +87,7 @@ academic_articles-55213210663201-2026-03-18-19-23-24.snapshot
 
 # Local ingestion data + manifests/checkpoints (multi-GB, not for git)
 content_shards/
+
+# Ops scripts in content_shards/ are tracked (git add -f); the data there stays ignored.
+!content_shards/*.py
+!content_shards/*.sh
